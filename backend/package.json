@@ -1,0 +1,42 @@
+{
+  "name": "backend",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "tsc -p tsconfig.json && (tsc -p tsconfig.json --watch --preserveWatchOutput & node --watch --env-file=../.env dist/main.js)",
+    "build": "tsc -p tsconfig.json",
+    "start": "node --env-file=../.env dist/main.js",
+    "seed": "tsx --env-file=../.env prisma/seed.ts",
+    "admin:create": "tsx --env-file=../.env scripts/admin-create.ts",
+    "prisma": "dotenv -e ../.env -- prisma"
+  },
+  "dependencies": {
+    "@nestjs/common": "11",
+    "@nestjs/core": "11",
+    "@nestjs/platform-express": "11",
+    "@nestjs/swagger": "11",
+    "@nestjs/throttler": "6",
+    "@prisma/client": "6",
+    "aws4fetch": "^1.0.20",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.15.1",
+    "cookie-parser": "^1.4.7",
+    "helmet": "^8.3.0",
+    "multer": "^2.5.0",
+    "nodemailer": "^10.3.1",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "sharp": "^0.35.5"
+  },
+  "devDependencies": {
+    "@types/cookie-parser": "^1.4.10",
+    "@types/express": "5",
+    "@types/multer": "^2.3.0",
+    "@types/node": "22",
+    "@types/nodemailer": "^8.0.2",
+    "dotenv-cli": "^11.1.0",
+    "prisma": "6",
+    "tsx": "^4.23.15",
+    "typescript": "5"
+  }
+}

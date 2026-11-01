@@ -1,0 +1,30 @@
+{
+  "name": "changan-togo",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@9.15.9",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "db:start": "bash scripts/db-local.sh start",
+    "db:stop": "bash scripts/db-local.sh stop",
+    "db:migrate": "pnpm --filter backend prisma migrate deploy",
+    "db:seed": "pnpm --filter backend seed",
+    "admin:create": "pnpm --filter backend admin:create",
+    "dev": "pnpm --parallel --filter backend --filter frontend --filter admin dev",
+    "build": "pnpm --filter backend build && pnpm --filter frontend --filter admin build",
+    "start": "pnpm --parallel --filter backend --filter frontend --filter admin start",
+    "test:e2e": "node --test e2e/*.test.mjs"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.64.1"
+  },
+  "pnpm": {
+    "overrides": {
+      "multer": ">=2.5.0",
+      "postcss": ">=8.5.23",
+      "js-yaml": ">=5.4.1"
+    }
+  }
+}

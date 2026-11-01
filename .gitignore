@@ -1,0 +1,9 @@
+node_modules/
+.next/
+dist/
+.env
+.env.local
+.pgdata/
+backend/storage/
+e2e/artifacts/
+*.tsbuildinfo

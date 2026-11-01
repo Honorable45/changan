@@ -1,0 +1,258 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Le catalogue distingue quatre notions à ne jamais confondre :
+/// présence au catalogue (published), commercialisation au Togo (commercialStatus),
+/// stock réel et commande (availability).
+enum CommercialStatus {
+  TO_CONFIRM
+  MARKETED_TOGO
+}
+
+enum Availability {
+  UNCONFIRMED
+  AVAILABLE
+  ON_ORDER
+  UNAVAILABLE
+}
+
+enum Energy {
+  PETROL
+  DIESEL
+  HYBRID
+  PLUG_IN_HYBRID
+  RANGE_EXTENDER
+  ELECTRIC
+}
+
+enum SpecGroup {
+  POWERTRAIN
+  DIMENSIONS
+  COMFORT
+  TECHNOLOGY
+  SAFETY
+  COMMERCIAL
+}
+
+enum SpecVerification {
+  CONFIRMED_TOGO
+  INTERNATIONAL_SOURCE
+}
+
+enum MediaKind {
+  IMAGE
+  VIDEO
+  MODEL_3D
+  SPIN_FRAME
+}
+
+enum MediaView {
+  FRONT
+  REAR
+  SIDE
+  THREE_QUARTER
+  INTERIOR
+  DASHBOARD
+  SEATS
+  TRUNK
+  WHEELS
+  LIGHTS
+  DETAIL
+  OTHER
+}
+
+enum RequestType {
+  PRICE
+  TEST_DRIVE
+  INFORMATION
+}
+
+enum RequestStatus {
+  NEW
+  IN_PROGRESS
+  CLOSED
+}
+
+model VehicleCategory {
+  id       String    @id @default(cuid())
+  slug     String    @unique
+  name     String
+  position Int       @default(0)
+  vehicles Vehicle[]
+}
+
+model Vehicle {
+  id               String           @id @default(cuid())
+  slug             String           @unique
+  name             String
+  tagline          String?
+  summary          String?
+  categoryId       String
+  category         VehicleCategory  @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  energies         Energy[]
+  published        Boolean          @default(false)
+  isDemo           Boolean          @default(false)
+  isNew            Boolean          @default(false)
+  commercialStatus CommercialStatus @default(TO_CONFIRM)
+  availability     Availability     @default(UNCONFIRMED)
+  position         Int              @default(0)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  versions         VehicleVersion[]
+  specifications   VehicleSpecification[]
+  media            VehicleMedia[]
+  colors           VehicleColor[]
+  requests         ContactRequest[]
+
+  @@index([published, position])
+}
+
+model VehicleVersion {
+  id           String   @id @default(cuid())
+  vehicleId    String
+  vehicle      Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  name         String
+  year         Int?
+  /// Prix en FCFA. N'est exposé publiquement que si priceVisible est vrai.
+  priceFcfa    Int?
+  priceVisible Boolean  @default(false)
+  position     Int      @default(0)
+
+  @@index([vehicleId])
+}
+
+model VehicleSpecification {
+  id           String           @id @default(cuid())
+  vehicleId    String
+  vehicle      Vehicle          @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  group        SpecGroup
+  /// Clé stable utilisée par le comparateur (length, wheelbase, engine...).
+  key          String?
+  label        String
+  value        String
+  position     Int              @default(0)
+  verification SpecVerification @default(INTERNATIONAL_SOURCE)
+  sourceLabel  String?
+  sourceUrl    String?
+
+  @@index([vehicleId, group])
+}
+
+model VehicleColor {
+  id        String         @id @default(cuid())
+  vehicleId String
+  vehicle   Vehicle        @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  name      String
+  hex       String?
+  confirmed Boolean        @default(false)
+  position  Int            @default(0)
+  media     VehicleMedia[]
+
+  @@index([vehicleId])
+}
+
+model VehicleMedia {
+  id            String        @id @default(cuid())
+  vehicleId     String
+  vehicle       Vehicle       @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  kind          MediaKind     @default(IMAGE)
+  view          MediaView     @default(OTHER)
+  colorId       String?
+  color         VehicleColor? @relation(fields: [colorId], references: [id], onDelete: SetNull)
+  alt           String        @default("")
+  /// Clés de stockage par largeur { "480": "...", "2560": "...", "original": "..." }.
+  /// Les fichiers sont dans le stockage objet : jamais dans la base.
+  files         Json
+  /// Variantes détourées (fond transparent), si elles existent.
+  cutoutFiles   Json?
+  cutoutWidth   Int?
+  cutoutHeight  Int?
+  width         Int?
+  height        Int?
+  bytes         Int?
+  dominantColor String?
+  isPrimary     Boolean       @default(false)
+  position      Int           @default(0)
+  credit        String?
+  license       String?
+  licenseUrl    String?
+  sourceUrl     String?
+  createdAt     DateTime      @default(now())
+
+  @@index([vehicleId, kind, position])
+}
+
+model ContactRequest {
+  id           String        @id @default(cuid())
+  type         RequestType
+  status       RequestStatus @default(NEW)
+  vehicleId    String?
+  vehicle      Vehicle?      @relation(fields: [vehicleId], references: [id], onDelete: SetNull)
+  versionLabel String?
+  name         String
+  phone        String
+  email        String?
+  message      String?
+  createdAt    DateTime      @default(now())
+
+  @@index([status, createdAt])
+}
+
+/// Paramètres administrables. Tout champ vide reste masqué sur le site.
+model SiteSettings {
+  id                    Int      @id @default(1)
+  demoMode              Boolean  @default(true)
+  heroVehicleId         String?
+  featuredVehicleId     String?
+  logoUrl               String?
+  whatsappNumber        String?
+  phone                 String?
+  email                 String?
+  address               String?
+  openingHours          String?
+  facebookUrl           String?
+  instagramUrl          String?
+  tiktokUrl             String?
+  youtubeUrl            String?
+  linkedinUrl           String?
+  dealerName            String?
+  warrantyText          String?
+  testDriveConditions   String?
+  legalNotice           String?
+  privacyPolicy         String?
+  updatedAt             DateTime @updatedAt
+}
+
+model AdminUser {
+  id           String               @id @default(cuid())
+  email        String               @unique
+  passwordHash String
+  name         String?
+  createdAt    DateTime             @default(now())
+  sessions     AdminSession[]
+  resetTokens  PasswordResetToken[]
+}
+
+model AdminSession {
+  tokenHash String    @id
+  userId    String
+  user      AdminUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
+model PasswordResetToken {
+  tokenHash String    @id
+  userId    String
+  user      AdminUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  usedAt    DateTime?
+}

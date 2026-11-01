@@ -1,0 +1,9 @@
+packages:
+  - admin
+  - backend
+  - frontend
+onlyBuiltDependencies:
+  - sharp
+  - prisma
+  - '@prisma/client'
+  - '@prisma/engines'
