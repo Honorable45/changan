@@ -1,0 +1,17 @@
+# Client du jeu : fichiers statiques. Les noms des scripts contiennent leur empreinte : ils se gardent un an.
+:80 {
+	root * /srv
+	header /assets/* Cache-Control "public, max-age=31536000, immutable"
+	header /game/* Cache-Control "public, max-age=604800"
+	header / Cache-Control "no-cache"
+	header /index.html Cache-Control "no-cache"
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+	}
+	try_files {path} /index.html
+	file_server {
+		precompressed br gzip
+	}
+}

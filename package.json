@@ -13,9 +13,14 @@
     "db:seed": "pnpm --filter backend seed",
     "admin:create": "pnpm --filter backend admin:create",
     "dev": "pnpm --parallel --filter backend --filter frontend --filter admin dev",
-    "build": "pnpm --filter backend build && pnpm --filter frontend --filter admin build",
-    "start": "pnpm --parallel --filter backend --filter frontend --filter admin start",
-    "test:e2e": "node --test e2e/*.test.mjs"
+    "build": "pnpm --filter backend build && pnpm --filter frontend --filter admin --filter jeu-client build",
+    "start": "pnpm --parallel --filter backend --filter frontend --filter admin --filter jeu-client --filter jeu-serveur start",
+    "test:e2e": "node --test e2e/*.test.mjs jeu/tests/*.test.mjs",
+    "jeu:dev": "pnpm --parallel --filter jeu-client --filter jeu-serveur dev",
+    "jeu:build": "pnpm --filter jeu-client build",
+    "jeu:start": "pnpm --parallel --filter jeu-client --filter jeu-serveur start",
+    "jeu:charge": "pnpm --filter jeu-serveur charge",
+    "test:jeu": "node --test jeu/tests/*.test.mjs"
   },
   "devDependencies": {
     "playwright-core": "^1.64.1"

@@ -1,0 +1,22 @@
+{
+  "name": "jeu-serveur",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "start": "node src/index.ts",
+    "charge": "node src/charge.ts",
+    "dev": "node --watch src/index.ts"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "22",
+    "@types/ws": "^8.5.12",
+    "typescript": "5"
+  }
+}

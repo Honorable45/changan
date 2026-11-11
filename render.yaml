@@ -1,0 +1,48 @@
+# Mise en ligne gratuite du jeu « Lomé en jeu » sur Render (https://render.com), depuis ce dépôt GitHub :
+# Render > New > Blueprint > choisir ce dépôt. Voir jeu/DEPLOIEMENT.md.
+services:
+  # Serveur du jeu en ligne : multijoueur (WebSocket /ws) et savoir partagé de SMART AI (/savoir).
+  - type: web
+    name: lome-jeu-serveur
+    runtime: docker
+    plan: free
+    dockerfilePath: ./jeu/serveur/Dockerfile
+    dockerContext: .
+    healthCheckPath: /sante
+    envVars:
+      - key: TRUST_PROXY
+        value: "1"
+      - key: MAX_JOUEURS
+        value: "1500"
+      - key: CAPACITE_SALLE
+        value: "60"
+      # Seul le site du jeu peut se connecter au serveur.
+      - key: ORIGINES
+        fromService:
+          type: web
+          name: lome-jeu
+          property: host
+
+  # Le jeu : fichiers statiques compilés par Vite.
+  - type: web
+    name: lome-jeu
+    runtime: static
+    buildCommand: npx -y pnpm@9.15.9 install --frozen-lockfile --filter jeu-client && npx -y pnpm@9.15.9 --filter jeu-client build
+    staticPublishPath: ./jeu/client/dist
+    envVars:
+      # Le jeu se connecte au serveur ci-dessus : wss://<son adresse>/ws.
+      - key: VITE_SERVEUR_HOST
+        fromService:
+          type: web
+          name: lome-jeu-serveur
+          property: host
+      # Adresse du site de la concession (liens « Réserver un vrai essai ») : à remplir dans Render si le site est en ligne.
+      - key: VITE_SITE_URL
+        sync: false
+    headers:
+      - path: /assets/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
+      - path: /config.json
+        name: Cache-Control
+        value: no-cache

@@ -3,7 +3,20 @@ node_modules/
 dist/
 .env
 .env.local
+.env.production
 .pgdata/
 backend/storage/
 e2e/artifacts/
 *.tsbuildinfo
+
+# Vidéos de référence de tiers : ne pas publier
+docs/2 Fervrier/
+docs/iaitogo et palis des congrais/
+docs/autre lieu/
+docs/iai-interieur/
+
+# Visage d’Honorable tiré de sa vidéo personnelle : ne pas publier dans le dépôt public.
+jeu/client/public/game/humains/visage-honorable.png
+
+# Savoir appris des joueurs (données de jeu, propres à chaque serveur)
+jeu/serveur/savoir.json

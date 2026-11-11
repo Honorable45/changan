@@ -1,0 +1,26 @@
+{
+  "name": "jeu-client",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host --port 3004",
+    "build": "tsc --noEmit && vite build && node precompresse.mjs",
+    "start": "vite preview --host --port 3004 --strictPort"
+  },
+  "dependencies": {
+    "react": "19",
+    "react-dom": "19",
+    "three": "^0.187.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/react": "19",
+    "@types/react-dom": "19",
+    "@types/three": "^0.187.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "tailwindcss": "4",
+    "typescript": "5",
+    "vite": "^7.0.0"
+  }
+}

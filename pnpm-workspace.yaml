@@ -2,6 +2,8 @@ packages:
   - admin
   - backend
   - frontend
+  - jeu/client
+  - jeu/serveur
 onlyBuiltDependencies:
   - sharp
   - prisma

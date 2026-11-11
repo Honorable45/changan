@@ -1,0 +1,5 @@
+Personnages, coiffures et animations : Quaternius (https://quaternius.com)
+« Universal Base Characters » et « Universal Animation Library », version Standard.
+Licence : CC0 1.0 Universel (domaine public), https://creativecommons.org/publicdomain/zero/1.0/
+Fichiers optimisés pour le jeu (textures WebP réduites, géométrie compressée, animations choisies).
+Les vêtements sont peints dans le jeu : ils ne viennent pas du pack.
