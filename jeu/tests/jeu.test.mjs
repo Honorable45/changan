@@ -13,7 +13,7 @@ let glBrowser;
 after(() => glBrowser?.close());
 
 async function page(width = 1440, { webgl, ...opts } = {}) {
-  glBrowser ??= await chromium.launch({ executablePath: process.env.CHROME_PATH ?? '/usr/bin/google-chrome', args: ['--no-sandbox', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
+  glBrowser ??= await chromium.launch({ executablePath: process.env.CHROME_PATH ?? '/usr/bin/google-chrome', args: ['--no-sandbox', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', '--autoplay-policy=no-user-gesture-required'] });
   const ctx = await glBrowser.newContext({ viewport: { width, height: width < 768 ? 800 : 900 }, ...opts });
   const p = await ctx.newPage();
   p.errors = [];
@@ -26,7 +26,7 @@ async function page(width = 1440, { webgl, ...opts } = {}) {
 test('essai virtuel : sur téléphone droit, la partie attend le passage à l\'horizontale', { timeout: 120000 }, async () => {
   const p = await page(390, { webgl: true, hasTouch: true, isMobile: true, viewport: { width: 390, height: 800 }, screen: { width: 390, height: 800 } });
   await p.goto(`${BASE}/`);
-  await p.getByRole('button', { name: 'Prendre le volant' }).tap();
+  await p.getByRole('button', { name: 'Jouer', exact: true }).tap();
   const message = p.getByText('Tournez votre téléphone');
   await message.waitFor({ timeout: 120000 });
   await p.setViewportSize({ width: 800, height: 390 });
@@ -46,7 +46,7 @@ test('essai virtuel : sur téléphone droit, la partie attend le passage à l\'h
 test('essai virtuel : volant et pédales tactiles, frein puis marche arrière', { timeout: 180000 }, async () => {
   const p = await page(800, { webgl: true, hasTouch: true, isMobile: true, viewport: { width: 800, height: 390 }, screen: { width: 800, height: 390 } });
   await p.goto(`${BASE}/`);
-  await p.getByRole('button', { name: 'Prendre le volant' }).tap();
+  await p.getByRole('button', { name: 'Jouer', exact: true }).tap();
   await p.getByRole('button', { name: 'Start' }).tap();
   const read = () => p.evaluate(() => { const d = document.querySelector('#jeu').dataset; return { heading: +d.heading, speed: +d.speed, z: +d.z }; });
   for (const name of ['Frein', 'Accélérateur']) {
@@ -76,7 +76,10 @@ test('essai virtuel : volant et pédales tactiles, frein puis marche arrière', 
 test('essai virtuel : Honorable marche, court, saute, monte en voiture et en redescend', { timeout: 300000 }, async () => {
   const p = await page(640, { webgl: true, viewport: { width: 640, height: 360 } });
   await p.goto(`${BASE}/`);
-  await p.getByRole('button', { name: 'Se promener avec Honorable' }).click();
+  // Un seul bouton « Jouer » : Honorable part au volant, et descend avec E.
+  await p.getByRole('button', { name: 'Jouer', exact: true }).click();
+  await p.locator('#jeu[data-mode="car"]').waitFor({ timeout: 120000 });
+  await p.keyboard.press('e');
   const jeu = p.locator('#jeu');
   await p.locator('#jeu[data-mode="foot"]').waitFor({ timeout: 120000 });
   const read = () => p.evaluate(() => { const d = document.querySelector('#jeu').dataset; return { x: +d.x, z: +d.z, mode: d.mode, speed: +d.speed }; });
@@ -109,8 +112,9 @@ test('essai virtuel : Honorable marche, court, saute, monte en voiture et en red
 test('essai virtuel, ville imaginaire : le parcours se termine au clavier, avec feu, clignotants et stationnement', { timeout: 420000 }, async () => {
   const p = await page(640, { webgl: true, hasTouch: true, viewport: { width: 640, height: 360 } });
   await p.goto(`${BASE}/`);
-  await p.getByRole('button', { name: 'Ville imaginaire' }).click();
-  await p.getByRole('button', { name: 'Prendre le volant' }).click();
+  // Parcours guidé noté, dans la ville imaginaire : accessible par lien depuis le bouton unique « Jouer ».
+  await p.goto(`${BASE}/?ville=imaginaire&mode=parcours`);
+  await p.getByRole('button', { name: 'Jouer', exact: true }).click();
   await p.getByRole('button', { name: 'Start' }).click();
   const read = () => p.evaluate(() => {
     const d = document.querySelector('#jeu').dataset;
@@ -209,7 +213,7 @@ test('essai virtuel, Lomé : le vrai parcours mène à l\'IAI-Togo, de bout en b
 test('essai virtuel, Lomé : la partie démarre devant l\'IAI en conduite libre, sans erreur', { timeout: 180000 }, async () => {
   const p = await page(640, { webgl: true, hasTouch: true, viewport: { width: 640, height: 360 } });
   await p.goto(`${BASE}/`);
-  await p.getByRole('button', { name: 'Conduite libre' }).click();
+  await p.getByRole('button', { name: 'Jouer', exact: true }).click();
   await p.getByRole('button', { name: 'Start' }).click({ timeout: 120000 });
   await p.waitForFunction(() => document.querySelector('#jeu')?.dataset.x, null, { timeout: 30000 });
   const hud = await p.locator('#jeu').textContent();
@@ -260,7 +264,7 @@ test('essai virtuel, Lomé : un itinéraire calculé mène au lieu cherché, et 
 test('essai virtuel, Lomé : sur téléphone, chercher IAI affiche l\'itinéraire', { timeout: 180000 }, async () => {
   const p = await page(800, { webgl: true, hasTouch: true, isMobile: true, viewport: { width: 800, height: 390 }, screen: { width: 800, height: 390 } });
   await p.goto(`${BASE}/`);
-  await p.getByRole('button', { name: 'Prendre le volant' }).tap();
+  await p.getByRole('button', { name: 'Jouer', exact: true }).tap();
   await p.getByRole('button', { name: 'Start' }).tap({ timeout: 120000 });
   await p.getByRole('button', { name: 'Rechercher' }).tap();
   await p.getByRole('searchbox').fill('iai');
@@ -365,19 +369,20 @@ test('essai virtuel, Lomé : l’hélicoptère décolle de son aire, vole, se po
 });
 
 /* Jeu en ligne */
-const { VERSION, encodeEtat, decodeInstantane, decodeEtat, encodeInstantane, nettoieNom } = await import('../partage/protocole.ts');
+const { VERSION, VOIX_MAX_OCTETS, encodeEtat, encodeVoix, decodeVoixRelais, decodeInstantane, decodeEtat, encodeInstantane, nettoieNom, nettoieMessage } = await import('../partage/protocole.ts');
 const APPARENCE = { skin: 0x5a3a26, top: 0x9cc8ec, bottom: 0x17181b, hair: 0x120f0d, shoes: 0x111112, dress: false, cap: null, tie: 0x0c0c0e };
 
 function client(nom = 'Essai') {
   const ws = new WebSocket(SERVEUR);
-  const textes = [], instantanes = [];
+  const textes = [], instantanes = [], voix = [];
   ws.on('message', (data, binaire) => {
-    if (binaire) instantanes.push(decodeInstantane(new DataView(data.buffer, data.byteOffset, data.byteLength)));
+    if (binaire && data[0] === 3) voix.push(decodeVoixRelais(new Uint8Array(data)));
+    else if (binaire) instantanes.push(decodeInstantane(new DataView(data.buffer, data.byteOffset, data.byteLength)));
     else textes.push(JSON.parse(String(data)));
   });
   const ouvert = new Promise((res, rej) => { ws.once('open', res); ws.once('error', rej); });
   const attendre = async (test, ms = 5000) => { const fin = Date.now() + ms; while (Date.now() < fin) { const m = test(); if (m) return m; await new Promise((r) => setTimeout(r, 30)); } throw new Error('délai dépassé'); };
-  return { ws, textes, instantanes, ouvert, attendre, bonjour: () => ws.send(JSON.stringify({ t: 'bonjour', v: VERSION, nom, apparence: APPARENCE })) };
+  return { ws, textes, instantanes, voix, ouvert, attendre, bonjour: () => ws.send(JSON.stringify({ t: 'bonjour', v: VERSION, nom, apparence: APPARENCE })) };
 }
 
 test('jeu en ligne : le protocole binaire se relit à l’identique et refuse les messages invalides', () => {
@@ -421,24 +426,129 @@ test('jeu en ligne : deux joueurs proches se voient, un départ est annoncé, un
   assert.equal((await c.attendre(() => c.textes.find((m) => m.t === 'refus'))).raison, 'nom');
 });
 
-test('jeu en ligne : deux navigateurs dans Lomé voient chacun l’autre joueur', { timeout: 300000 }, async () => {
+test('communication : messages écrits à toute la salle, nettoyés, limités en débit, et historique pour l’arrivant', async () => {
+  assert.equal(nettoieMessage('  Salut\u0000 \n la  ville  '), 'Salut la ville');
+  assert.equal(nettoieMessage('   '), null);
+  assert.equal(nettoieMessage('a'.repeat(500)).length, 200);
+  const a = client('Afi'), b = client('Yao');
+  await Promise.all([a.ouvert, b.ouvert]);
+  a.bonjour(); b.bonjour();
+  const wa = await a.attendre(() => a.textes.find((m) => m.t === 'bienvenue'));
+  await b.attendre(() => b.textes.find((m) => m.t === 'bienvenue'));
+  try {
+    a.ws.send(JSON.stringify({ t: 'chat', txt: 'On se retrouve\u0007 devant l’IAI ?' }));
+    const recu = await b.attendre(() => b.textes.find((m) => m.t === 'chat'));
+    assert.equal(recu.nom, 'Afi'); assert.equal(recu.id, wa.id); assert.equal(recu.txt, 'On se retrouve devant l’IAI ?');
+    await a.attendre(() => a.textes.find((m) => m.t === 'chat'), 2000); // l'auteur reçoit sa confirmation
+    a.ws.send(JSON.stringify({ t: 'chat', txt: 'trop vite' }));
+    await a.attendre(() => a.textes.find((m) => m.t === 'trop-vite'));
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(b.textes.filter((m) => m.t === 'chat').length, 1, 'le message trop rapproché n’est pas diffusé');
+    // Un texte de plus de 2 Ko ferme la connexion de l'abuseur.
+    const c = client('Abuseur');
+    await c.ouvert; c.bonjour(); await c.attendre(() => c.textes.find((m) => m.t === 'bienvenue'));
+    const ferme = new Promise((r) => c.ws.once('close', (code) => r(code)));
+    c.ws.send(JSON.stringify({ t: 'chat', txt: 'x'.repeat(5000) }));
+    assert.equal(await ferme, 1009);
+    // Un nouvel arrivant reçoit les derniers messages de sa salle.
+    const d = client('Esi');
+    await d.ouvert; d.bonjour();
+    const h = await d.attendre(() => d.textes.find((m) => m.t === 'historique'));
+    assert.ok(h.m.some((m) => m.txt === 'On se retrouve devant l’IAI ?'));
+    d.ws.close();
+  } finally { a.ws.close(); b.ws.close(); }
+});
+
+test('communication : la carte donne la position de tous les joueurs de la salle, même loin et dans un bâtiment', async () => {
+  const a = client('Carte A'), b = client('Carte B');
+  await Promise.all([a.ouvert, b.ouvert]);
+  a.bonjour(); b.bonjour();
+  const wb = await b.attendre(() => b.textes.find((m) => m.t === 'bienvenue'));
+  await a.attendre(() => a.textes.find((m) => m.t === 'bienvenue'));
+  try {
+    // B est à 3 km de A : hors du voisinage (400 m), mais sur la carte.
+    a.ws.send(encodeEtat({ x: 0, z: 0, y: 0, cap: 0, vitesse: 0, mode: 0, genre: 0, drapeaux: 0 }));
+    b.ws.send(encodeEtat({ x: 2900.4, z: -800.6, y: 0, cap: 0, vitesse: 0, mode: 1, genre: 2, drapeaux: 0 }));
+    const vu = await a.attendre(() => a.textes.findLast((m) => m.t === 'carte' && m.j.some((p) => p[0] === wb.id)), 5000);
+    assert.deepEqual(vu.j.find((p) => p[0] === wb.id), [wb.id, 'Carte B', 2900, -801, 0]);
+    // Dans un bâtiment (intérieur loin de la ville) : la carte garde la dernière position dehors.
+    b.ws.send(encodeEtat({ x: 9000, z: 9000, y: 0, cap: 0, vitesse: 0, mode: 0, genre: 0, drapeaux: 16 }));
+    const n = a.textes.length;
+    const dedans = await a.attendre(() => a.textes.slice(n).find((m) => m.t === 'carte' && m.j.some((p) => p[0] === wb.id && p[4] === 1)), 5000);
+    assert.deepEqual(dedans.j.find((p) => p[0] === wb.id), [wb.id, 'Carte B', 2900, -801, 1]);
+  } finally { a.ws.close(); b.ws.close(); }
+});
+
+test('communication : un message vocal est relayé aux autres joueurs, jamais à l’auteur, et la parole est limitée', async () => {
+  const a = client('Voix A'), b = client('Voix B');
+  await Promise.all([a.ouvert, b.ouvert]);
+  a.bonjour(); b.bonjour();
+  const wa = await a.attendre(() => a.textes.find((m) => m.t === 'bienvenue'));
+  await b.attendre(() => b.textes.find((m) => m.t === 'bienvenue'));
+  try {
+    const audio = new Uint8Array(20000).map((_, i) => i % 251);
+    a.ws.send(encodeVoix(0, audio));
+    const v = await b.attendre(() => b.voix[0]);
+    assert.equal(v.id, wa.id); assert.equal(v.format, 0);
+    assert.deepEqual(Buffer.from(v.audio), Buffer.from(audio), 'audio relayé à l’octet près');
+    // Trop lourd : ignoré.
+    a.ws.send(encodeVoix(0, new Uint8Array(VOIX_MAX_OCTETS + 1)));
+    // Budget : 120 Ko d'un coup au plus, puis 2 Ko par seconde. 20 Ko déjà dits, 5 de plus passent, le 6e est refusé.
+    for (let i = 0; i < 7; i++) a.ws.send(encodeVoix(0, new Uint8Array(20000)));
+    await a.attendre(() => a.textes.find((m) => m.t === 'trop-vite'));
+    await new Promise((r) => setTimeout(r, 500));
+    assert.equal(b.voix.length, 6, 'relais limités par le budget');
+    assert.ok(b.voix.every((x) => x.audio.byteLength <= VOIX_MAX_OCTETS));
+    assert.equal(a.voix.length, 0, 'l’auteur ne reçoit pas sa propre voix');
+  } finally { a.ws.close(); b.ws.close(); }
+});
+
+test('jeu en ligne : deux navigateurs dans Lomé se voient, se situent, s’écrivent et se parlent', { timeout: 420000 }, async () => {
   const pages = [await page(960, { webgl: true }), await page(960, { webgl: true })];
   for (const [i, p] of pages.entries()) {
     await p.goto(`${BASE}/`);
     await p.getByLabel('Votre pseudo, vu par les autres joueurs').fill(`Testeur ${i + 1}`);
-    await p.getByRole('button', { name: 'Se promener avec Honorable' }).click();
+    await p.getByRole('button', { name: 'Jouer', exact: true }).click();
   }
   for (const p of pages) {
     await p.locator('#jeu[data-online="en-ligne"]').waitFor({ timeout: 180000 });
     await p.waitForFunction(() => +document.querySelector('#jeu').dataset.voisins >= 1, null, { timeout: 120000 });
   }
+  const [p1, p2] = pages;
+  // Liste des joueurs : l'autre, sa distance, et « Y aller » trace l'itinéraire jusqu'à lui.
+  await p1.getByTestId('bouton-joueurs').click();
+  const ligne = p1.getByTestId('joueur').filter({ hasText: 'Testeur 2' });
+  await ligne.waitFor({ timeout: 30000 });
+  assert.match(await ligne.innerText(), /\d+ m/);
+  await ligne.getByRole('button', { name: 'Y aller' }).click();
+  await p1.getByTestId('itineraire').waitFor({ timeout: 10000 });
+  assert.match(await p1.getByTestId('itineraire').innerText(), /Testeur 2/);
+  // Message écrit : Y ouvre la discussion, Entrée envoie ; l'autre le voit à l'écran puis dans sa discussion.
+  await p1.locator('#jeu').click({ position: { x: 480, y: 450 } });
+  await p1.keyboard.press('y');
+  await p1.getByLabel('Message à tous les joueurs').fill('Salut Testeur 2, rendez-vous au Champion !');
+  await p1.keyboard.press('Enter');
+  await p1.getByTestId('message').filter({ hasText: 'rendez-vous au Champion' }).waitFor({ timeout: 10000 });
+  await p2.getByTestId('messages-recents').filter({ hasText: 'rendez-vous au Champion' }).waitFor({ timeout: 10000 });
+  await p2.getByTestId('bouton-discussion').click();
+  await p2.getByTestId('message').filter({ hasText: 'Testeur 1' }).waitFor();
+  // Message vocal, micro de test de Chrome : maintenir 1,5 s, relâcher ; l'autre le reçoit et l'entend.
+  const micro = p1.getByTestId('bouton-micro');
+  const boite = await micro.boundingBox();
+  await p1.mouse.move(boite.x + boite.width / 2, boite.y + boite.height / 2);
+  await p1.mouse.down();
+  await p1.getByTestId('voix-etat').filter({ hasText: 'Enregistrement' }).waitFor({ timeout: 10000 });
+  await p1.waitForTimeout(1500);
+  await p1.mouse.up();
+  await p2.getByTestId('message').filter({ hasText: 'Message vocal' }).waitFor({ timeout: 15000 });
+  await p2.getByTestId('voix-etat').filter({ hasText: 'Testeur 1 parle' }).waitFor({ timeout: 10000 });
   for (const p of pages) { assert.deepEqual(p.errors, []); await p.context().close(); }
 });
 
 test('SMART AI dans le jeu : le bouton prend le volant, le tableau de bord s’affiche, un second clic rend la main', { timeout: 300000 }, async () => {
   const p = await page(1280, { webgl: true });
   await p.goto(`${BASE}/`);
-  await p.getByRole('button', { name: 'Conduite libre' }).click();
+  await p.getByRole('button', { name: 'Jouer', exact: true }).click();
   await p.getByRole('button', { name: 'Start' }).click({ timeout: 120000 });
   const bouton = p.getByTestId('smart-ai');
   await bouton.waitFor();

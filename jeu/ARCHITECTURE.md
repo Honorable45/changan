@@ -165,10 +165,26 @@ Pendant toute manœuvre, des sondes vérifient l'espace devant et derrière (mur
 - Les autres joueurs en ligne ne sont pas perçus : ce sont des fantômes, qu'on ne peut pas percuter.
 - À quelques endroits de la carte, un angle de bâtiment touche le bord de la voie, ou deux véhicules de la circulation se bloquent face à face. SMART AI y alterne attente et manœuvres, sans choc, mais peut mettre plus d'une minute à se dégager.
 
+## Communication entre joueurs
+
+Tout passe par la connexion WebSocket du jeu, dans la salle du joueur (60 joueurs au plus).
+
+| Fonction | Côté client | Côté serveur |
+| --- | --- | --- |
+| **Où sont les autres** | `Communication.tsx` : liste des joueurs (distance, direction, « dans un bâtiment »), bouton « Y aller » qui trace l'itinéraire ; `engine.ts` : points de couleur et pseudos sur la mini-carte, flèche au bord pour ceux hors du cadre | message `carte` toutes les 2 s : `[id, pseudo, x, z, dedans]` de toute la salle, au mètre ; dans un bâtiment, la dernière position dehors |
+| **Discussion écrite** | touche Y ou bouton bulle ; les derniers messages s'affichent 8 s même discussion fermée ; compteur de non-lus | message `chat` nettoyé (`nettoieMessage`, 200 caractères), un toutes les 0,8 s par joueur, diffusé à la salle ; les 30 derniers envoyés à l'arrivant (`historique`), en mémoire seulement |
+| **Messages vocaux** (talkie-walkie) | `voix.ts` : maintenir le bouton micro ou V, relâcher pour envoyer (15 s au plus, Opus 16 kbit/s, environ 2 Ko par seconde) ; lecture automatique l'un après l'autre, bouton pour couper les voix, ▶ pour réécouter | binaire `[3][format][audio]` relayé aux autres joueurs de la salle avec l'id de l'auteur, jamais enregistré ; budget de 120 Ko, rechargé de 2 Ko/s (une minute de parole sur trois) |
+| **Ignorer quelqu'un** | depuis la liste : ses messages écrits et vocaux sont filtrés chez soi | — |
+
+**Limites :**
+- La voix n'est pas un appel en direct : chaque message part au relâchement du bouton, comme une note vocale. Un appel en continu demanderait WebRTC et un serveur relais (TURN), payant.
+- Le micro n'est autorisé par les navigateurs que sur une page https (ou `localhost`) : en ligne sur Render, oui ; sur le réseau local en `http://192.168…`, non.
+- Pas de modération automatique : « Ignorer » et la limite de débit sont les seules protections. Avant une ouverture au grand public, prévoir un signalement et un filtre.
+
 ## Sécurité du serveur
 
 - **Validation des messages :**
-  - taille maximale de 2 Ko par message ;
+  - taille maximale de 2 Ko par message, 64 Ko pour un message vocal ;
   - format binaire contrôlé ;
   - positions dans les limites du monde, nombres finis ;
   - pseudo nettoyé, de 2 à 20 caractères ;

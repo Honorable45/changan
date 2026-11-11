@@ -1,6 +1,6 @@
 import {
-  FREQUENCE, GENRES, RETARD_INTERPOLATION, VERSION, decodeInstantane, encodeEtat,
-  type Apparence, type DuServeur, type Etat, type EtatJoueur, type Genre,
+  FORMATS_VOIX, FREQUENCE, GENRES, RETARD_INTERPOLATION, TYPE_VOIX, VERSION, decodeInstantane, decodeVoixRelais, encodeEtat, encodeVoix,
+  nettoieMessage, type Apparence, type DuServeur, type Etat, type EtatJoueur, type Genre, type PointCarte,
 } from '../../partage/protocole.ts';
 
 /**
@@ -10,6 +10,14 @@ import {
 export type Autre = { id: number; nom: string; apparence: Apparence; etat: EtatJoueur };
 export type EtatReseau = 'hors-ligne' | 'connexion' | 'en-ligne' | 'refus';
 type Echantillon = { t: number; e: EtatJoueur };
+/** Un joueur de la salle sur la carte. */
+export type JoueurCarte = { id: number; nom: string; x: number; z: number; dedans: boolean };
+/** Un message de la discussion : écrit, ou vocal (avec son enregistrement, lisible tant que la partie dure). */
+export type MessageJeu = { cle: number; id: number; nom: string; at: number; moi: boolean; txt?: string; voix?: { url: string; duree: number } };
+let cleMessage = 0;
+/** Couleur d'un joueur, la même sur la carte, dans la liste et dans la discussion. */
+const COULEURS_JOUEURS = ['#4fc3ff', '#ffb547', '#c38bff', '#ff7aa8', '#7be08a', '#ffe066', '#5ee0d0', '#ff8f5a'];
+export const couleurJoueur = (id: number) => COULEURS_JOUEURS[id % COULEURS_JOUEURS.length]!;
 
 const lerpAngle = (a: number, b: number, t: number) => { let d = b - a; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2; return a + d * t; };
 
@@ -21,6 +29,18 @@ export function creerReseau(url: string, nom: string, apparence: Apparence) {
   // Décalage entre l'horloge du serveur et la nôtre, lissé : l'interpolation suit le temps du serveur.
   let decalage: number | null = null;
   let dernierEnvoi = 0, dernierEtat = '';
+  let monId = -1, carte: JoueurCarte[] = [];
+  let messages: MessageJeu[] = [];
+  const ecouteurs = new Set<(m: MessageJeu) => void>();
+  let tropVite = 0;
+  const nomDe = (id: number) => fiches.get(id)?.nom ?? carte.find((c) => c.id === id)?.nom ?? 'Joueur';
+  const ajouter = (m: Omit<MessageJeu, 'cle'>) => {
+    const full = { ...m, cle: ++cleMessage };
+    messages.push(full);
+    // Les 100 derniers messages ; les enregistrements vocaux oubliés sont libérés.
+    while (messages.length > 100) { const old = messages.shift()!; if (old.voix) URL.revokeObjectURL(old.voix.url); }
+    for (const f of ecouteurs) f(full);
+  };
 
   const ouvrir = () => {
     statut = 'connexion';
@@ -29,6 +49,14 @@ export function creerReseau(url: string, nom: string, apparence: Apparence) {
     ws.onopen = () => { ws!.send(JSON.stringify({ t: 'bonjour', v: VERSION, nom, apparence })); };
     ws.onmessage = (ev) => {
       if (typeof ev.data !== 'string') {
+        const octets = new Uint8Array(ev.data as ArrayBuffer);
+        if (octets[0] === TYPE_VOIX) {
+          const v = decodeVoixRelais(octets);
+          if (!v) return;
+          const blob = new Blob([v.audio.slice()], { type: FORMATS_VOIX[v.format] });
+          ajouter({ id: v.id, nom: nomDe(v.id), at: Date.now(), moi: false, voix: { url: URL.createObjectURL(blob), duree: 0 } });
+          return;
+        }
         const snap = decodeInstantane(new DataView(ev.data as ArrayBuffer));
         if (!snap) return;
         const local = performance.now();
@@ -45,14 +73,18 @@ export function creerReseau(url: string, nom: string, apparence: Apparence) {
       }
       let m: DuServeur;
       try { m = JSON.parse(ev.data); } catch { return; }
-      if (m.t === 'bienvenue') { statut = 'en-ligne'; attente = 1000; salle = m.salle; population = { salle: m.joueurs, total: m.joueurs }; }
+      if (m.t === 'bienvenue') { statut = 'en-ligne'; attente = 1000; salle = m.salle; monId = m.id; population = { salle: m.joueurs, total: m.joueurs }; }
+      else if (m.t === 'carte') carte = m.j.map(([id, n, x, z, d]: PointCarte) => ({ id, nom: n, x, z, dedans: d === 1 }));
+      else if (m.t === 'chat') ajouter({ id: m.id, nom: m.nom, txt: m.txt, at: m.at, moi: m.id === monId });
+      else if (m.t === 'historique') { for (const h of m.m) if (!messages.some((x) => x.at === h.at && x.id === h.id)) ajouter({ ...h, moi: false }); }
+      else if (m.t === 'trop-vite') tropVite = performance.now();
       else if (m.t === 'arrivee') fiches.set(m.id, { nom: m.nom, apparence: m.apparence });
       else if (m.t === 'depart') { fiches.delete(m.id); tampons.delete(m.id); }
       else if (m.t === 'population') population = { salle: m.salle, total: m.total };
       else if (m.t === 'refus') { statut = 'refus'; fermeVolontaire = m.raison !== 'complet'; }
     };
     ws.onclose = () => {
-      fiches.clear(); tampons.clear(); decalage = null;
+      fiches.clear(); tampons.clear(); decalage = null; carte = []; monId = -1;
       if (fermeVolontaire) { if (statut !== 'refus') statut = 'hors-ligne'; return; }
       statut = 'hors-ligne';
       planifier();
@@ -99,7 +131,29 @@ export function creerReseau(url: string, nom: string, apparence: Apparence) {
       }
       return out;
     },
-    fermer() { fermeVolontaire = true; if (relance) clearTimeout(relance); ws?.close(); },
+    /** Tous les joueurs de la salle (sauf soi), positions mises à jour toutes les 2 secondes. */
+    joueurs(): JoueurCarte[] { return carte.filter((c) => c.id !== monId); },
+    get monId() { return monId; },
+    get messages(): readonly MessageJeu[] { return messages; },
+    /** Le serveur a refusé un message trop rapproché il y a moins de 3 s. */
+    get tropVite() { return performance.now() - tropVite < 3000; },
+    /** Prévenu à chaque nouveau message (écrit ou vocal) ; renvoie de quoi se désabonner. */
+    ecouter(f: (m: MessageJeu) => void) { ecouteurs.add(f); return () => { ecouteurs.delete(f); }; },
+    /** Message écrit à toute la salle ; il s'affiche quand le serveur le renvoie. */
+    ecrire(txt: string) {
+      const propre = nettoieMessage(txt);
+      if (!propre || !ws || ws.readyState !== WebSocket.OPEN || statut !== 'en-ligne') return false;
+      ws.send(JSON.stringify({ t: 'chat', txt: propre }));
+      return true;
+    },
+    /** Message vocal à toute la salle ; il s'ajoute tout de suite à sa propre discussion. */
+    parler(format: number, audio: Uint8Array, duree: number, url: string) {
+      if (!ws || ws.readyState !== WebSocket.OPEN || statut !== 'en-ligne') return false;
+      ws.send(encodeVoix(format, audio));
+      ajouter({ id: monId, nom, at: Date.now(), moi: true, voix: { url, duree } });
+      return true;
+    },
+    fermer() { for (const m of messages) if (m.voix) URL.revokeObjectURL(m.voix.url); fermeVolontaire = true; if (relance) clearTimeout(relance); ws?.close(); },
   };
 }
 export type Reseau = ReturnType<typeof creerReseau>;

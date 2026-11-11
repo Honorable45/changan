@@ -1,19 +1,133 @@
-# Services de base pour la production : PostgreSQL et stockage S3 (MinIO). API et site se lancent à part (voir README).
+# Production : docker compose --env-file .env.production up -d --build (voir docs/deploiement.md).
+x-backend-env: &backend-env
+  NODE_ENV: production
+  DATABASE_URL: postgresql://changan:${POSTGRES_PASSWORD:?définir POSTGRES_PASSWORD}@db:5432/changan
+  ADMIN_URL: https://${ADMIN_DOMAIN:?définir ADMIN_DOMAIN}
+  COOKIE_SECURE: "true"
+  TRUST_PROXY: "2" # Caddy, puis l'application Next qui relaie
+  S3_ENDPOINT: ${S3_ENDPOINT:-}
+  S3_BUCKET: ${S3_BUCKET:-}
+  S3_REGION: ${S3_REGION:-auto}
+  S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
+  S3_SECRET_KEY: ${S3_SECRET_KEY:-}
+  S3_PUBLIC_URL: ${S3_PUBLIC_URL:-}
+  SMTP_URL: ${SMTP_URL:-}
+  SMTP_FROM: ${SMTP_FROM:-}
+
 services:
   db:
-    image: postgres:16-alpine
+    image: docker.io/library/postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: changan
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?définir POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: changan
     volumes: [dbdata:/var/lib/postgresql/data]
-  minio:
-    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
-    command: server /data --console-address ":9001"
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U changan -d changan]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Applique les migrations puis s'arrête, avant chaque démarrage de l'API.
+  migrate:
+    image: changan-backend
+    build: { context: ., dockerfile: backend/Dockerfile }
+    environment: *backend-env
+    command: [node_modules/.bin/prisma, migrate, deploy]
+    depends_on:
+      db: { condition: service_healthy }
+    restart: "no"
+
+  backend:
+    image: changan-backend
+    build: { context: ., dockerfile: backend/Dockerfile }
+    restart: unless-stopped
+    environment: *backend-env
+    volumes: [media:/data/media]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    healthcheck:
+      test: [CMD-SHELL, "node -e \"fetch('http://127.0.0.1:3001/api/site').then((r)=>process.exit(r.ok?0:1),()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  frontend:
+    image: changan-frontend
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        NEXT_PUBLIC_SITE_URL: https://${SITE_DOMAIN:?définir SITE_DOMAIN}
+        NEXT_PUBLIC_JEU_URL: https://${JEU_DOMAIN:?définir JEU_DOMAIN}/
+    restart: unless-stopped
     environment:
-      MINIO_ROOT_USER: ${S3_ACCESS_KEY:?définir S3_ACCESS_KEY}
-      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:?définir S3_SECRET_KEY}
-    volumes: [miniodata:/data]
+      API_INTERNAL_URL: http://backend:3001
+    depends_on:
+      backend: { condition: service_healthy }
+
+  admin:
+    image: changan-admin
+    build:
+      context: .
+      dockerfile: admin/Dockerfile
+      args:
+        NEXT_PUBLIC_SITE_URL: https://${SITE_DOMAIN}
+    restart: unless-stopped
+    environment:
+      API_INTERNAL_URL: http://backend:3001
+    depends_on:
+      backend: { condition: service_healthy }
+
+  # Jeu : client statique (servi par Caddy, ou par un CDN) et serveur en ligne, en plusieurs instances identiques.
+  jeu-client:
+    image: changan-jeu-client
+    build:
+      context: .
+      dockerfile: jeu/client/Dockerfile
+      args:
+        VITE_SITE_URL: https://${SITE_DOMAIN}
+        VITE_SERVEUR_URL: wss://${JEU_DOMAIN}/ws
+    restart: unless-stopped
+
+  jeu-serveur:
+    image: changan-jeu-serveur
+    build: { context: ., dockerfile: jeu/serveur/Dockerfile }
+    restart: unless-stopped
+    environment:
+      ORIGINES: https://${JEU_DOMAIN}
+      MAX_JOUEURS: ${JEU_MAX_JOUEURS:-1500}
+      CAPACITE_SALLE: ${JEU_CAPACITE_SALLE:-60}
+      # Savoir appris des joueurs, partagé par toutes les instances (fusionné toutes les 30 s).
+      SAVOIR_FICHIER: /data/savoir.json
+    volumes: [savoir:/data]
+    # Une instance par cœur de processeur environ ; le répartiteur les découvre toutes.
+    deploy:
+      replicas: ${JEU_INSTANCES:-2}
+      resources:
+        limits: { cpus: "1", memory: 512M }
+    stop_grace_period: 10s
+
+  caddy:
+    image: docker.io/library/caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    environment:
+      SITE_DOMAIN: ${SITE_DOMAIN}
+      ADMIN_DOMAIN: ${ADMIN_DOMAIN}
+      JEU_DOMAIN: ${JEU_DOMAIN}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro,Z
+      - caddydata:/data
+      - caddyconfig:/config
+    depends_on: [frontend, admin, jeu-client, jeu-serveur]
+
 volumes:
+  savoir:
   dbdata:
-  miniodata:
+  media:
+  caddydata:
+  caddyconfig:

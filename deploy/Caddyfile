@@ -1,0 +1,40 @@
+# Seul point d'entrée public. Caddy obtient et renouvelle les certificats HTTPS.
+(securite) {
+	encode zstd gzip
+	header Strict-Transport-Security "max-age=31536000"
+}
+
+{$SITE_DOMAIN} {
+	import securite
+	reverse_proxy frontend:3000
+}
+
+{$ADMIN_DOMAIN} {
+	import securite
+	reverse_proxy admin:3002
+}
+
+# Jeu : /ws vers les instances du serveur en ligne, le reste vers le client statique.
+{$JEU_DOMAIN} {
+	import securite
+	# /ws : jeu en ligne ; /savoir : passages appris des joueurs par SMART AI.
+	@serveur path /ws /savoir
+	handle @serveur {
+		reverse_proxy {
+			# Toutes les instances « jeu-serveur » de Docker, redécouvertes toutes les 10 s.
+			dynamic a jeu-serveur 3005 {
+				refresh 10s
+			}
+			# Chaque nouveau joueur va à l'instance la moins chargée ; une instance pleine ou en arrêt (/sante en 503) est écartée.
+			lb_policy least_conn
+			health_uri /sante
+			health_interval 5s
+			health_status 200
+			# Les connexions WebSocket ouvertes restent sur leur instance jusqu'à la fin de la partie.
+			stream_close_delay 5m
+		}
+	}
+	handle {
+		reverse_proxy jeu-client:80
+	}
+}

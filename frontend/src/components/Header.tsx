@@ -7,6 +7,7 @@ import { Logo } from './Logo';
 const NAV = [
   { href: '/vehicules', label: 'Véhicules' },
   { href: '/comparer', label: 'Comparer' },
+  { href: '/essai-virtuel', label: 'Essai virtuel', wide: true },
   { href: '/marque', label: 'La marque' },
   { href: '/services', label: 'Services' },
   { href: '/contact', label: 'Contact' },
@@ -39,13 +40,20 @@ export function Header({ logoUrl }: { logoUrl: string | null }) {
     <header className="pointer-events-none sticky top-0 z-40 h-20 text-white">
       <div className={`shell flex h-full items-center transition-[padding] duration-300 ${scrolled ? 'max-w-[1240px]' : ''}`}>
         <div className={`glass glass-refract pointer-events-auto flex w-full items-center justify-between rounded-full pl-5 pr-2 transition-[height] duration-300 ${scrolled ? 'h-[3.25rem]' : 'h-[3.75rem]'}`}>
-          <Link href="/" aria-label="Accueil CHANGAN Togo" className="relative z-10 flex min-h-11 items-center"><Logo url={logoUrl} className="!text-[.9rem]" /></Link>
+          <div className="relative z-10 flex items-center gap-2">
+            <Link href="/" aria-label="Accueil CHANGAN Togo" className="flex min-h-11 items-center"><Logo url={logoUrl} className="!text-[.9rem]" /></Link>
+            {pathname !== '/' && (
+              <Link href="/" className="flex min-h-10 items-center gap-1.5 whitespace-nowrap rounded-full px-3 text-sm max-[379px]:px-1 transition-colors hover:bg-white/10">
+                <span aria-hidden="true">←</span> <span className="max-[379px]:sr-only">Accueil</span>
+              </Link>
+            )}
+          </div>
           <nav aria-label="Navigation principale" className="hidden items-center gap-1 lg:flex">
             {NAV.map((n) => {
               const on = pathname.startsWith(n.href);
               return (
                 <Link key={n.href} href={n.href} aria-current={on ? 'page' : undefined}
-                  className={`flex min-h-10 items-center rounded-full px-4 text-[0.9375rem] transition-colors ${on ? 'bg-white/20 shadow-[inset_0_1px_0_rgb(255_255_255/.35)]' : 'hover:bg-white/10'}`}>{n.label}</Link>
+                  className={`min-h-10 items-center rounded-full px-4 text-[0.9375rem] transition-colors ${n.wide ? 'hidden xl:flex' : 'flex'} ${on ? 'bg-white/20 shadow-[inset_0_1px_0_rgb(255_255_255/.35)]' : 'hover:bg-white/10'}`}>{n.label}</Link>
               );
             })}
           </nav>
@@ -53,7 +61,7 @@ export function Header({ logoUrl }: { logoUrl: string | null }) {
             Réserver un essai
           </Link>
           <button ref={toggle} type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-controls="menu-mobile" aria-label={open ? 'Fermer le menu' : 'Ouvrir le menu'}
-            className="relative z-10 flex h-11 w-11 flex-col items-center justify-center gap-[7px] rounded-full hover:bg-white/10 lg:hidden">
+            className="relative z-10 flex h-11 w-11 shrink-0 flex-col items-center justify-center gap-[7px] rounded-full hover:bg-white/10 lg:hidden">
             <span className={`h-px w-5 bg-current transition-transform duration-300 ${open ? 'translate-y-1 rotate-45' : ''}`} />
             <span className={`h-px w-5 bg-current transition-transform duration-300 ${open ? '-translate-y-1 -rotate-45' : ''}`} />
           </button>

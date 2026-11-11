@@ -17,14 +17,17 @@ const PHOTO = fileURLToPath(new URL('../backend/seed/photos/uni-k-01.jpg', impor
 const WIDTHS = [320, 375, 390, 768, 1024, 1440];
 
 let browser;
+let glBrowser;
 before(async () => {
   mkdirSync(OUT, { recursive: true });
   browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? '/usr/bin/google-chrome', args: ['--no-sandbox'] });
 });
-after(() => browser?.close());
+after(() => Promise.all([browser?.close(), glBrowser?.close()]));
 
-async function page(width = 1440, opts = {}) {
-  const ctx = await browser.newContext({ viewport: { width, height: width < 768 ? 800 : 900 }, ...opts });
+async function page(width = 1440, { webgl, ...opts } = {}) {
+  // Rendu 3D logiciel réservé au jeu : il ralentit les animations mesurées par les autres tests.
+  if (webgl) glBrowser ??= await chromium.launch({ executablePath: process.env.CHROME_PATH ?? '/usr/bin/google-chrome', args: ['--no-sandbox', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
+  const ctx = await (webgl ? glBrowser : browser).newContext({ viewport: { width, height: width < 768 ? 800 : 900 }, ...opts });
   const p = await ctx.newPage();
   p.errors = [];
   p.on('pageerror', (e) => p.errors.push(`exception: ${e.message}`));
@@ -50,7 +53,7 @@ async function firstVehicleSlug() {
 
 test('aucun débordement ni image cassée sur toutes les largeurs', async () => {
   const vehicles = await firstVehicleSlug();
-  const paths = ['/', '/vehicules', `/vehicules/${vehicles[0].slug}`, `/comparer?m=${vehicles[0].slug},${vehicles[1].slug},${vehicles[2].slug}`, '/contact', '/marque', '/services', '/credits', '/confidentialite', '/mentions-legales'];
+  const paths = ['/', '/vehicules', `/vehicules/${vehicles[0].slug}`, `/comparer?m=${vehicles[0].slug},${vehicles[1].slug},${vehicles[2].slug}`, '/contact', '/marque', '/services', '/essai-virtuel', '/credits', '/confidentialite', '/mentions-legales'];
   for (const width of WIDTHS) {
     const p = await page(width);
     for (const path of paths) {
@@ -421,6 +424,23 @@ test('accueil : la voiture roule au rythme du défilement, dans les deux sens', 
     const back = await state();
     assert.ok(Math.abs(back.center - width / 2) < 2, 'elle revient si on remonte');
     assert.ok(Math.abs(back.wheel) < 0.001);
+    await p.context().close();
+  }
+});
+
+test('essai virtuel : le bouton de l\'accueil y mène, visible dès l\'arrivée', async () => {
+  for (const width of WIDTHS) {
+    const p = await page(width);
+    await p.goto(BASE);
+    const link = p.locator('.drive-stage').getByRole('link', { name: 'Essai virtuel' });
+    const b = await link.boundingBox();
+    const view = p.viewportSize();
+    assert.ok(b && b.x >= 0 && b.x + b.width <= view.width && b.y >= 0 && b.y + b.height <= view.height, `visible à ${width} px`);
+    assert.equal(await p.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 0);
+    await link.click();
+    await p.waitForURL('**/essai-virtuel');
+    // Le jeu vit à part : la page le présente et y mène.
+    assert.match(await p.getByRole('link', { name: 'Lancer le jeu' }).getAttribute('href') ?? '', /:3004\/|^https?:\/\/jeu\./);
     await p.context().close();
   }
 });

@@ -12,8 +12,8 @@
 import { createServer, type IncomingMessage } from 'node:http';
 import { WebSocketServer, type WebSocket, type RawData } from 'ws';
 import {
-  DRAPEAU, FREQUENCE, RAYON_VOISINAGE, VERSION, VOISINS_MAX, decodeEtat, encodeInstantane, nettoieNom, valideApparence,
-  type Apparence, type DuServeur, type Etat, type EtatJoueur,
+  DRAPEAU, FREQUENCE, RAYON_VOISINAGE, TYPE_VOIX, VERSION, VOISINS_MAX, VOIX_MAX_OCTETS, decodeEtat, decodeVoixClient, encodeInstantane, encodeVoixRelais,
+  nettoieMessage, nettoieNom, valideApparence, type Apparence, type DuServeur, type Etat, type EtatJoueur, type PointCarte,
 } from '../../partage/protocole.ts';
 import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { validCritical, validDemo, type Knowledge } from '../../partage/savoir.ts';
@@ -64,8 +64,14 @@ const envoisSavoir = new Map<string, number>();
 type Joueur = {
   id: number; ws: WebSocket; ip: string; nom: string | null; apparence: Apparence | null; etat: Etat | null;
   salle: Salle | null; vus: Set<number>; jetons: number; abus: number; vivant: boolean;
+  /** Messages écrits : un toutes les 0,8 s au plus. Voix : budget d'octets, rechargé de 2 Ko par seconde (une minute de parole sur trois). */
+  dernierChat: number; budgetVoix: number;
+  /** Dernière position connue hors des bâtiments, pour la carte (dans un bâtiment, le joueur est loin, dans un intérieur). */
+  dehors: { x: number; z: number } | null;
 };
-type Salle = { nom: string; joueurs: Set<Joueur> };
+type Message = { id: number; nom: string; txt: string; at: number };
+type Salle = { nom: string; joueurs: Set<Joueur>; historique: Message[] };
+const BUDGET_VOIX = 120_000;
 
 const joueurs = new Set<Joueur>();
 const salles: Salle[] = [];
@@ -73,7 +79,7 @@ const parIp = new Map<string, number>();
 const libres: number[] = [];
 let prochainId = 1;
 let numeroSalle = 1;
-const stats = { tickMoyen: 0, tickMax: 0, octetsParSeconde: 0, refusDebit: 0 };
+const stats = { tickMoyen: 0, tickMax: 0, octetsParSeconde: 0, refusDebit: 0, octetsVoix: 0 };
 
 function nouvelId() {
   if (libres.length) return libres.pop()!;
@@ -86,7 +92,7 @@ function choisirSalle(): Salle {
   let meilleure: Salle | null = null;
   for (const s of salles) if (s.joueurs.size < CAPACITE_SALLE && (!meilleure || s.joueurs.size > meilleure.joueurs.size)) meilleure = s;
   if (meilleure) return meilleure;
-  const s: Salle = { nom: `${INSTANCE}-${numeroSalle++}`, joueurs: new Set() };
+  const s: Salle = { nom: `${INSTANCE}-${numeroSalle++}`, joueurs: new Set(), historique: [] };
   salles.push(s);
   return s;
 }
@@ -119,16 +125,20 @@ function recevoir(j: Joueur, data: RawData, binaire: boolean) {
     if (++j.abus > 200) j.ws.close(1008, 'debit');
     return;
   }
+  const buf = data as Buffer;
   if (binaire) {
     if (!j.salle) return;
-    const buf = data as Buffer;
+    if (buf[0] === TYPE_VOIX) { relayerVoix(j, buf); return; }
+    if (buf.byteLength > 64) return;
     const etat = decodeEtat(new DataView(buf.buffer, buf.byteOffset, buf.byteLength));
-    if (etat) j.etat = etat;
+    if (etat) { j.etat = etat; if (!(etat.drapeaux & DRAPEAU.dedans)) j.dehors = { x: etat.x, z: etat.z }; }
     return;
   }
-  if (j.salle) return;
-  let m: { t?: unknown; v?: unknown; nom?: unknown; apparence?: unknown };
+  // Seuls les messages vocaux peuvent être gros ; un texte de plus de 2 Ko est un abus.
+  if (buf.byteLength > 2048) { j.ws.close(1009, 'taille'); return; }
+  let m: { t?: unknown; v?: unknown; nom?: unknown; apparence?: unknown; txt?: unknown };
   try { m = JSON.parse(String(data)); } catch { j.ws.close(1003, 'json'); return; }
+  if (j.salle) { if (m.t === 'chat') discuter(j, m.txt); return; }
   if (m.t !== 'bonjour') return;
   if (m.v !== VERSION) { envoyer(j, { t: 'refus', raison: 'version' }); j.ws.close(4000, 'version'); return; }
   const nom = nettoieNom(m.nom), apparence = valideApparence(m.apparence);
@@ -140,6 +150,41 @@ function recevoir(j: Joueur, data: RawData, binaire: boolean) {
   salle.joueurs.add(j);
   j.salle = salle;
   envoyer(j, { t: 'bienvenue', id: j.id, salle: salle.nom, joueurs: salle.joueurs.size });
+  if (salle.historique.length) envoyer(j, { t: 'historique', m: salle.historique });
+  envoyer(j, { t: 'carte', j: carteDe(salle) });
+}
+
+/** Message écrit : nettoyé, limité en débit, envoyé à toute la salle et gardé dans les 30 derniers. Rien n'est écrit sur disque. */
+function discuter(j: Joueur, txt: unknown) {
+  const s = j.salle, now = Date.now();
+  const propre = nettoieMessage(txt);
+  if (!s || !propre) return;
+  if (now - j.dernierChat < 800) { envoyer(j, { t: 'trop-vite' }); return; }
+  j.dernierChat = now;
+  const m: Message = { id: j.id, nom: j.nom!, txt: propre, at: now };
+  s.historique.push(m);
+  if (s.historique.length > 30) s.historique.shift();
+  const texte = JSON.stringify({ t: 'chat', ...m } satisfies DuServeur);
+  for (const o of s.joueurs) if (o.ws.readyState === o.ws.OPEN && o.ws.bufferedAmount < 512_000) o.ws.send(texte);
+}
+
+/** Message vocal : relayé tel quel aux autres joueurs de la salle, jamais enregistré. Le budget limite la parole à une minute sur trois. */
+function relayerVoix(j: Joueur, buf: Buffer) {
+  const s = j.salle;
+  const v = decodeVoixClient(new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength));
+  if (!s || !v) return;
+  if (v.audio.byteLength > j.budgetVoix) { envoyer(j, { t: 'trop-vite' }); return; }
+  j.budgetVoix -= v.audio.byteLength;
+  const relais = encodeVoixRelais(j.id, v.format, v.audio);
+  stats.octetsVoix += relais.byteLength * (s.joueurs.size - 1);
+  for (const o of s.joueurs) if (o !== j && o.ws.readyState === o.ws.OPEN && o.ws.bufferedAmount < 512_000) o.ws.send(relais);
+}
+
+/** Les joueurs de la salle sur la carte : position au mètre près, la dernière prise dehors pour ceux qui sont dans un bâtiment. */
+function carteDe(s: Salle): PointCarte[] {
+  const out: PointCarte[] = [];
+  for (const o of s.joueurs) if (o.dehors && o.etat) out.push([o.id, o.nom!, Math.round(o.dehors.x), Math.round(o.dehors.z), o.etat.drapeaux & DRAPEAU.dedans ? 1 : 0]);
+  return out;
 }
 
 const http = createServer((req, res) => {
@@ -189,14 +234,15 @@ const http = createServer((req, res) => {
     res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4' });
     res.end([
       `jeu_joueurs ${joueurs.size}`, `jeu_salles ${salles.length}`, `jeu_tick_ms_moyen ${stats.tickMoyen.toFixed(3)}`,
-      `jeu_tick_ms_max ${stats.tickMax.toFixed(3)}`, `jeu_octets_sortants_par_seconde ${Math.round(stats.octetsParSeconde)}`, `jeu_refus_debit_total ${stats.refusDebit}`, '',
+      `jeu_tick_ms_max ${stats.tickMax.toFixed(3)}`, `jeu_octets_sortants_par_seconde ${Math.round(stats.octetsParSeconde)}`, `jeu_refus_debit_total ${stats.refusDebit}`, `jeu_voix_octets_total ${stats.octetsVoix}`, '',
     ].join('\n'));
     return;
   }
   res.writeHead(404).end();
 });
 
-const wss = new WebSocketServer({ noServer: true, maxPayload: 2048, perMessageDeflate: false, clientTracking: false });
+// Les messages vocaux sont les seuls gros messages ; le reste est vérifié à 2 Ko dans recevoir().
+const wss = new WebSocketServer({ noServer: true, maxPayload: VOIX_MAX_OCTETS + 16, perMessageDeflate: false, clientTracking: false });
 let arret = false;
 
 http.on('upgrade', (req, socket, head) => {
@@ -209,7 +255,7 @@ http.on('upgrade', (req, socket, head) => {
   const id = nouvelId();
   if (id < 0) return refuser(503);
   wss.handleUpgrade(req, socket, head, (ws) => {
-    const j: Joueur = { id, ws, ip, nom: null, apparence: null, etat: null, salle: null, vus: new Set(), jetons: 60, abus: 0, vivant: true };
+    const j: Joueur = { id, ws, ip, nom: null, apparence: null, etat: null, salle: null, vus: new Set(), jetons: 60, abus: 0, vivant: true, dernierChat: 0, budgetVoix: BUDGET_VOIX, dehors: null };
     joueurs.add(j);
     parIp.set(ip, (parIp.get(ip) ?? 0) + 1);
     ws.binaryType = 'nodebuffer';
@@ -262,7 +308,7 @@ function tick() {
       j.ws.send(msg);
     }
   }
-  for (const j of joueurs) j.jetons = Math.min(60, j.jetons + 30 / FREQUENCE);
+  for (const j of joueurs) { j.jetons = Math.min(60, j.jetons + 30 / FREQUENCE); j.budgetVoix = Math.min(BUDGET_VOIX, j.budgetVoix + 2000 / FREQUENCE); }
   const duree = performance.now() - debut;
   stats.tickMoyen += (duree - stats.tickMoyen) * 0.05;
   stats.tickMax = Math.max(stats.tickMax * 0.995, duree);
@@ -273,9 +319,15 @@ const boucle = setInterval(tick, 1000 / FREQUENCE);
 const sauvegarde = setInterval(sauverSavoir, 30000);
 setInterval(() => { const t = Date.now(); for (const [ip, at] of envoisSavoir) if (t - at > 60000) envoisSavoir.delete(ip); }, 60000).unref();
 
-// Population, toutes les 2 secondes.
+// Population et carte des joueurs de la salle, toutes les 2 secondes (une seule sérialisation par salle).
 const population = setInterval(() => {
-  for (const s of salles) for (const j of s.joueurs) envoyer(j, { t: 'population', salle: s.joueurs.size, total: joueurs.size });
+  for (const s of salles) {
+    const carte = JSON.stringify({ t: 'carte', j: carteDe(s) } satisfies DuServeur);
+    for (const j of s.joueurs) {
+      envoyer(j, { t: 'population', salle: s.joueurs.size, total: joueurs.size });
+      if (j.ws.readyState === j.ws.OPEN && j.ws.bufferedAmount < 256_000) j.ws.send(carte);
+    }
+  }
 }, 2000);
 
 // Battement : une connexion muette pendant 30 secondes est coupée.

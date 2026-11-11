@@ -12,7 +12,7 @@ export function Footer({ site, categories }: { site: Site; categories: Category[
           {site.dealerName && <p className="mt-4 text-sm text-steel">{site.dealerName}</p>}
         </div>
         <FooterList title="Catalogue" links={[...categories.map((c) => ({ href: `/vehicules?categorie=${c.slug}`, label: c.name })), { href: '/comparer', label: 'Comparateur' }]} />
-        <FooterList title="Le site" links={[{ href: '/marque', label: 'La marque' }, { href: '/services', label: 'Services' }, { href: '/contact', label: 'Contact' }]} />
+        <FooterList title="Le site" links={[{ href: '/marque', label: 'La marque' }, { href: '/services', label: 'Services' }, { href: '/essai-virtuel', label: 'Essai virtuel' }, { href: '/contact', label: 'Contact' }]} />
         <div className="md:col-span-4">
           <h2 className="eyebrow text-steel">Concessionnaire</h2>
           {hasContact ? (

@@ -34,15 +34,16 @@ export function HeroStage({ vehicles, initial }: { vehicles: VehicleCard[]; init
         ))}
       </div>
       <div className="shell relative z-10 grid gap-5 pb-6 md:grid-cols-12 md:items-end md:pb-8">
-        <div className="md:col-span-7">
+        <div className="md:col-span-6 xl:col-span-5">
           <p className="max-w-md text-[1.0625rem] leading-snug text-white/75">{v.tagline}</p>
           <div role="group" aria-label="Choisir un modèle" className="glass seg mt-4">
             {vehicles.map((x, i) => <button key={x.id} type="button" aria-pressed={i === index} onClick={() => setIndex(i)}>{x.name}</button>)}
           </div>
         </div>
-        <div className="flex flex-col gap-2 sm:flex-row md:col-span-5 md:justify-end">
+        <div className="flex flex-col gap-2 sm:flex-row md:col-span-6 md:flex-col lg:flex-row lg:justify-end xl:col-span-7">
           <Link href={`/vehicules/${v.slug}`} className="btn btn-light whitespace-nowrap">Découvrir le modèle</Link>
-          <Link href="/vehicules" className="btn btn-ghost whitespace-nowrap">Explorer la gamme</Link>
+          <Link href="/essai-virtuel" className="btn btn-ghost whitespace-nowrap">Essai virtuel</Link>
+          <Link href="/vehicules" className="btn btn-ghost whitespace-nowrap max-xl:hidden!">Explorer la gamme</Link>
         </div>
       </div>
     </section>

@@ -7,6 +7,7 @@ export const metadata: Metadata = { title: 'Services', description: 'Demande de 
 const SERVICES = [
   { title: 'Demande de prix', text: 'Indiquez le modèle qui vous intéresse et recevez une réponse du concessionnaire.', href: '/contact?demande=prix', cta: 'Demander un prix' },
   { title: 'Essai routier', text: 'Demandez un rendez-vous pour prendre le volant.', href: '/contact?demande=essai', cta: 'Réserver un essai' },
+  { title: 'Essai virtuel', text: 'Prenez le volant dans une ville en 3D, depuis votre navigateur.', href: '/essai-virtuel', cta: 'Jouer' },
   { title: 'Informations', text: 'Une question sur la gamme, une version ou un équipement ?', href: '/contact?demande=info', cta: 'Poser une question' },
 ];
 

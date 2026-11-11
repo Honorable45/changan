@@ -99,6 +99,17 @@ export default async function Home() {
         </section>
       )}
 
+      <section aria-labelledby="virtuel-titre" className="stage py-16 text-white md:py-24">
+        <div className="shell grid gap-6 md:grid-cols-12 md:items-end">
+          <div className="md:col-span-8">
+            <p className="eyebrow text-white/60">Essai virtuel</p>
+            <h2 id="virtuel-titre" className="display mt-4 text-[clamp(2.25rem,5vw,5rem)]">Prenez le volant, ici et maintenant.</h2>
+            <p className="mt-4 max-w-xl text-white/70">Une ville en 3D, un parcours de deux minutes, de jour ou de nuit. Sur ordinateur ou téléphone.</p>
+          </div>
+          <div className="md:col-span-4"><Link href="/essai-virtuel" className="btn btn-light w-full">Lancer l’essai virtuel</Link></div>
+        </div>
+      </section>
+
       <div className="theme-stone"><RequestSection site={site} /></div>
     </>
   );

@@ -8,7 +8,7 @@ import { buildVehicle, setFleet, sharedCar, type CarParts } from './vehicles';
 import type { Fleet } from './fleet';
 import { buildChampion, fcfa, productById } from './champion';
 import { DANSE_DECALAGE, DRAPEAU } from '../../../partage/protocole.ts';
-import { genreIndex, genreNom, type Reseau } from '../reseau';
+import { couleurJoueur, genreIndex, genreNom, type Reseau } from '../reseau';
 import { SmartAIController } from './smart-ai/controller.ts';
 import type { Telemetry } from './smart-ai/types.ts';
 import { DrivingRecorder, KnowledgeBase } from './smart-ai/learning.ts';
@@ -34,7 +34,11 @@ export type Hud = {
   /** Altitude de l'hélicoptère en mètres, null hors de l'hélicoptère. */
   altitude: number | null;
   /** Jeu en ligne : état de la connexion, joueurs dans la salle et sur le serveur. */
-  online: { statut: string; salle: number; total: number; voisins: number } | null;
+  online: {
+    statut: string; salle: number; total: number; voisins: number;
+    /** Les autres joueurs de la salle, du plus proche au plus loin ; cap relatif à celui du joueur, en radians. */
+    joueurs: { id: number; nom: string; distance: number; cap: number; dedans: boolean; x: number; z: number }[];
+  } | null;
   /** SMART AI : proposée dans un véhicule routier ; son tableau de bord quand elle conduit. */
   smartAvailable: boolean; smart: Telemetry | null;
 };
@@ -669,6 +673,12 @@ export function createGame(host: HTMLElement, options: GameOptions) {
   const reseau = options.reseau ?? null;
   type Remote = { person: Person; car: CarParts | null; genre: number; phase: number; spin: number };
   const remotes = new Map<number, Remote>();
+  // Position interpolée des voisins proches : plus fraîche que la carte de la salle, envoyée toutes les 2 s.
+  const livePos = new Map<number, { x: number; z: number }>();
+  const onlinePlayers = () => {
+    if (!reseau) return [];
+    return reseau.joueurs().map((p) => { const l = livePos.get(p.id); return l && !p.dedans ? { ...p, x: l.x, z: l.z } : p; });
+  };
   const remoteColors = [0xecedee, 0x26282c, 0x8d1f1f, 0x70747a, 0xe2b13c, 0x1c346e, 0xd9d6cf, 0x2f8f5b];
   // Les véhicules des autres sont recyclés d'un joueur à l'autre : aucun n'est reconstruit à chaque arrivée.
   const carPool = new Map<number, CarParts[]>();
@@ -699,8 +709,10 @@ export function createGame(host: HTMLElement, options: GameOptions) {
     if (!reseau) return;
     const list = sim.room ? [] : reseau.autres();
     const seen = new Set<number>();
+    livePos.clear();
     for (const o of list) {
       seen.add(o.id);
+      livePos.set(o.id, { x: o.etat.x, z: o.etat.z });
       let r = remotes.get(o.id);
       if (!r) {
         const person = people.build(o.apparence, { label: o.nom, shadow: false });
@@ -1045,6 +1057,19 @@ export function createGame(host: HTMLElement, options: GameOptions) {
       g.stroke();
       g.fillStyle = '#ff5a4d'; g.beginPath(); g.arc(sx(nav.x), sz(nav.z), out.width / 28, 0, Math.PI * 2); g.fill();
     }
+    // Les autres joueurs : un point de leur couleur et leur pseudo ; hors du cadre, une flèche au bord dans leur direction.
+    if (reseau && !sim.room) {
+      const r = out.width / 34, edge = out.width / 2 - r * 1.6;
+      g.font = `600 ${Math.round(out.width / 14)}px sans-serif`; g.textAlign = 'center';
+      for (const p of onlinePlayers()) {
+        let px = sx(p.x) - out.width / 2, pz = sz(p.z) - out.height / 2;
+        const outside = Math.max(Math.abs(px), Math.abs(pz)) > edge;
+        if (outside) { const f = edge / Math.max(Math.abs(px), Math.abs(pz)); px *= f; pz *= f; }
+        g.fillStyle = couleurJoueur(p.id); g.strokeStyle = '#0b0c0e'; g.lineWidth = out.width / 90;
+        g.beginPath(); g.arc(px + out.width / 2, pz + out.height / 2, outside ? r * 0.75 : r, 0, Math.PI * 2); g.fill(); g.stroke();
+        if (!outside) { g.lineWidth = out.width / 60; g.strokeText(p.nom.slice(0, 10), px + out.width / 2, pz + out.height / 2 - r * 1.5); g.fillText(p.nom.slice(0, 10), px + out.width / 2, pz + out.height / 2 - r * 1.5); }
+      }
+    }
     g.save();
     if (sim.mode === 'foot') {
       g.fillStyle = '#9fbfff';
@@ -1165,7 +1190,10 @@ export function createGame(host: HTMLElement, options: GameOptions) {
       mode: sim.mode, action: sim.action?.label ?? null, vehicle: VEHICLES[sim.car.kind].label, inside: sim.room ? (sim.room.ground && iai ? `${sim.room.name} · ${floorName(iai.level(sim.hero.base))}` : sim.room.name ?? 'Maison') : null, running: sim.hero.run,
       money, basket: [...basket], bag, dance: sim.hero.dance, altitude: sim.mode === 'car' && sim.car.kind === 'helico' ? Math.round(sim.car.y) : null,
       smartAvailable: smart.available(sim) && sim.free, smart: smart.active ? smart.status : null,
-      online: reseau ? { statut: reseau.statut, salle: reseau.population.salle, total: reseau.population.total, voisins: remotes.size } : null, shop: !!sim.room && sim.room.spots !== undefined, pad: padOn,
+      online: reseau ? {
+        statut: reseau.statut, salle: reseau.population.salle, total: reseau.population.total, voisins: remotes.size,
+        joueurs: sim.room ? [] : onlinePlayers().map((p) => ({ id: p.id, nom: p.nom, dedans: p.dedans, x: p.x, z: p.z, distance: Math.round(Math.hypot(p.x - c.x, p.z - c.z)), cap: Math.atan2(p.x - c.x, p.z - c.z) - c.heading })).sort((a, b) => a.distance - b.distance),
+      } : null, shop: !!sim.room && sim.room.spots !== undefined, pad: padOn,
     });
   };
 
@@ -1283,6 +1311,8 @@ export function createGame(host: HTMLElement, options: GameOptions) {
     setPaused(p: boolean) { paused = p; last = performance.now(); if (p) { keys.clear(); audio.pause(); } else audio.resume(); },
     continueFree() { sim.continueFree(); emit(); },
     places() { return world.places ?? []; },
+    /** Connexion au jeu en ligne (discussion, voix, joueurs), ou null en partie seule. */
+    get reseau() { return reseau; },
     navigate(name: string, x: number, z: number) { const ok = startNav(name, x, z); emit(); return ok; },
     clearNav() { nav = null; navStat = null; showNav(); smart.setDestination(null); emit(); },
     dispose() {

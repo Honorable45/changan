@@ -139,8 +139,8 @@ export function HeroDrive({ vehicle, view }: { vehicle: VehicleCard; view: Drive
           ))}
           <p ref={hint} className="drive-hint absolute inset-x-0 bottom-1 text-center text-sm text-white/70">Faites défiler pour démarrer</p>
         </div>
-        <div className="shell relative z-10 grid gap-5 pb-6 pt-3 md:grid-cols-12 md:items-end md:pb-8">
-          <div className="md:col-span-7">
+        <div className="shell relative z-10 grid gap-5 pb-[3.25rem] pt-3 md:grid-cols-12 md:items-end md:pb-[3.75rem]">
+          <div className="md:col-span-6 xl:col-span-5">
             <p className="max-w-md text-[1.0625rem] leading-snug text-white/75">{vehicle.tagline}</p>
             <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1">
               <div role="group" aria-label="Choisir une couleur" className="glass flex items-center gap-0.5 rounded-full p-0.5">
@@ -153,9 +153,10 @@ export function HeroDrive({ vehicle, view }: { vehicle: VehicleCard; view: Drive
               <p className="text-sm text-white/70"><span className="text-white">{view.colors[color]?.label}</span>{color > 0 ? ' · teinte simulée' : ' · photo d’origine'}</p>
             </div>
           </div>
-          <div className="flex flex-col gap-2 sm:flex-row md:col-span-5 md:justify-end">
+          <div className="flex flex-col gap-2 sm:flex-row md:col-span-6 md:flex-col lg:flex-row lg:justify-end xl:col-span-7">
             <Link href={`/vehicules/${vehicle.slug}`} className="btn btn-light whitespace-nowrap">Découvrir le modèle</Link>
-            <Link href="/vehicules" className="btn btn-ghost whitespace-nowrap">Explorer la gamme</Link>
+            <Link href="/essai-virtuel" className="btn btn-ghost whitespace-nowrap">Essai virtuel</Link>
+            <Link href="/vehicules" className="btn btn-ghost whitespace-nowrap max-xl:hidden!">Explorer la gamme</Link>
           </div>
         </div>
       </div>

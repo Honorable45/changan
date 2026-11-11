@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { SAVOIR_URL, SERVEUR_URL, SITE_URL } from './config';
 import { SmartAIButton, SmartAIDashboard, SmartAIFrame } from './SmartAIDashboard';
+import { Communication } from './Communication';
 import type { Game, Hud } from './moteur/engine';
 import { searchPlaces, type Place } from './moteur/nav';
 import type { GameEvent } from './moteur/sim';
@@ -16,7 +17,12 @@ const COLORS = [
   { id: 'bleu', label: 'Bleu', swatch: '#1c346e' },
 ];
 const PSEUDO_KEY = 'changan-jeu-pseudo';
-const LIGNE_KEY = 'changan-jeu-en-ligne';
+/**
+ * Un seul bouton « Jouer » : Lomé, conduite libre, en ligne, tout est disponible dans la partie
+ * (marcher avec Honorable, véhicules, hélicoptère, Champion, SMART AI, recherche, discussion).
+ * Le parcours guidé noté et la ville imaginaire restent accessibles par lien : ?mode=parcours, ?ville=imaginaire.
+ */
+const lien = () => (typeof location === 'undefined' ? new URLSearchParams() : new URLSearchParams(location.search));
 const readPseudo = () => { try { return localStorage.getItem(PSEUDO_KEY) ?? ''; } catch { return ''; } };
 const MESSAGES: Partial<Record<GameEvent, string>> = {
   hit: 'Choc : −50 points',
@@ -161,7 +167,8 @@ export function Jeu() {
   const [color, setColor] = useState(COLORS[0]!);
   const [night, setNight] = useState(false);
   const [free, setFree] = useState(false);
-  const [place, setPlace] = useState<'lome' | 'grid'>('lome');
+  const [place] = useState<'lome' | 'grid'>(() => (lien().get('ville') === 'imaginaire' ? 'grid' : 'lome'));
+  const [parcours] = useState(() => lien().get('mode') === 'parcours');
   const [hud, setHud] = useState<Hud | null>(null);
   const [paused, setPaused] = useState(false);
   const [toast, setToast] = useState<{ id: number; text: string } | null>(null);
@@ -173,10 +180,10 @@ export function Jeu() {
   const [searching, setSearching] = useState(false);
   const [query, setQuery] = useState('');
   const [places, setPlaces] = useState<Place[]>([]);
-  const [wantSearch, setWantSearch] = useState(false);
   const [foot, setFoot] = useState(false);
   const [pseudo, setPseudo] = useState('');
-  const [online, setOnline] = useState(true);
+  // Toujours en ligne quand un serveur est configuré : tous les joueurs sont dans la même ville.
+  const online = true;
   const host = useRef<HTMLDivElement>(null);
   const stage = useRef<HTMLDivElement>(null);
   const mapRef = useRef<HTMLCanvasElement>(null);
@@ -189,7 +196,6 @@ export function Jeu() {
   useEffect(() => {
     setTouchUi(matchMedia('(pointer: coarse)').matches); setBest(readBest());
     setPseudo(readPseudo() || `Joueur ${Math.floor(1000 + Math.random() * 9000)}`);
-    try { setOnline(localStorage.getItem(LIGNE_KEY) !== 'non'); } catch { /* en ligne par défaut */ }
   }, []);
 
   const leave = useCallback(() => {
@@ -225,7 +231,7 @@ export function Jeu() {
           // Jeu en ligne, seulement dans Lomé : la ville imaginaire reste une partie seule, plus légère.
           online && SERVEUR_URL && place === 'lome' ? Promise.all([import('./reseau'), import('./moteur/people')]) : null,
         ]);
-        try { localStorage.setItem(PSEUDO_KEY, pseudo); localStorage.setItem(LIGNE_KEY, online ? 'oui' : 'non'); } catch { /* réglages gardés pour la partie */ }
+        try { localStorage.setItem(PSEUDO_KEY, pseudo); } catch { /* réglages gardés pour la partie */ }
         // Les autres joueurs voient la tenue de l'IAI, avec une couleur de peau tirée du pseudo ; jamais le visage d'Honorable.
         const seed = [...pseudo].reduce((a, ch) => (a * 31 + ch.charCodeAt(0)) >>> 0, 7);
         const reseau = net ? net[0].creerReseau(SERVEUR_URL!, pseudo, (({ face: _f, skinShade: _s, ...look }) => look)(net[1].studentLook(seed))) : null;
@@ -245,7 +251,6 @@ export function Jeu() {
         if (silent.current) game.current.toggleMute();
         setPlaces(game.current.places());
         setPhase('playing');
-        if (wantSearch) { setSearching(true); setWantSearch(false); }
         if (matchMedia('(pointer: coarse)').matches) {
           // Android verrouille l'horizontale une fois en plein écran ; ailleurs, le message de rotation prend le relais.
           void Promise.resolve(stage.current?.requestFullscreen?.()).then(() => (isPhone() ? lockLandscape() : undefined)).catch(() => {});
@@ -378,68 +383,56 @@ export function Jeu() {
       <h1 className="mega mt-6 text-[clamp(2rem,11vw,10rem)]">Lomé en jeu</h1>
       <div className="mt-10 grid gap-10 md:mt-16 md:grid-cols-12">
         <div className="md:col-span-5">
-          <p className="display text-2xl md:text-3xl">Prenez le volant dans le quartier administratif de Lomé, puis réservez le vrai essai.</p>
-          <p className="mt-5 text-steel">Passez devant le monument de l’Indépendance et l’hôtel du 2 Février, respectez un feu, utilisez vos clignotants, puis garez-vous devant l’IAI-Togo. Comptez deux à trois minutes, ou roulez librement.</p>
+          <p className="display text-2xl md:text-3xl">Un bouton, toute la ville : roulez, marchez avec Honorable, et retrouvez les autres joueurs dans Lomé.</p>
+          <p className="mt-5 text-steel">Conduisez la Nevo Q05 ou une moto, descendez à pied, prenez l’hélicoptère, faites vos courses au Champion, laissez SMART AI conduire, cherchez un lieu, et parlez aux autres joueurs par écrit ou au micro.</p>
           <dl className="mt-8 grid gap-3 text-sm">
             <div className="flex justify-between gap-4 border-t border-line pt-3"><dt className="text-steel">Clavier</dt><dd className="text-right">Flèches ou ZQSD, Espace pour freiner</dd></div>
             <div className="flex justify-between gap-4 border-t border-line pt-3"><dt className="text-steel">Clignotants</dt><dd className="text-right">G et J</dd></div>
             <div className="flex justify-between gap-4 border-t border-line pt-3"><dt className="text-steel">Autres touches</dt><dd className="text-right">I : SMART AI, conduite autonome (conduite libre). Hélicoptère : Espace monter, Maj descendre, flèches avancer et tourner. Entrée démarrer, H klaxon, C vue, F recherche, N nuit, M son, P pause</dd></div>
             <div className="flex justify-between gap-4 border-t border-line pt-3"><dt className="text-steel">Avec Honorable</dt><dd className="text-right">E descendre, monter, entrer ou acheter ; Maj courir (ou avancer plus de 3 s), Espace sauter, T saluer, B danser</dd></div>
+            <div className="flex justify-between gap-4 border-t border-line pt-3"><dt className="text-steel">En ligne</dt><dd className="text-right">Les autres joueurs sur la carte et dans la liste, avec « Y aller ». Y : écrire à tous, V maintenu : message vocal</dd></div>
             <div className="flex justify-between gap-4 border-t border-line pt-3"><dt className="text-steel">Manette</dt><dd className="text-right">Stick gauche, gâchettes pour accélérer et freiner ; A agir, X sauter, B courir ou klaxon, Y danser</dd></div>
             <div className="flex justify-between gap-4 border-y border-line py-3"><dt className="text-steel">Téléphone</dt><dd className="text-right">À l’horizontale, volant et pédales à l’écran</dd></div>
           </dl>
         </div>
         <div className="md:col-span-6 md:col-start-7">
           <div className="glass rounded-[28px] p-5 md:p-8">
-            <fieldset className="mb-6">
-              <legend className="eyebrow text-white/60">Jeu en ligne</legend>
-              <label className="mt-3 block text-sm" htmlFor="pseudo">Votre pseudo, vu par les autres joueurs</label>
-              <input id="pseudo" value={pseudo} maxLength={20} onChange={(e) => setPseudo(e.target.value)} autoComplete="nickname"
-                className="mt-2 min-h-11 w-full rounded-full border border-white/30 bg-black/30 px-4 text-base text-white placeholder:text-white/50" />
-              <label className="mt-3 flex min-h-11 items-center gap-3 text-sm">
-                <input type="checkbox" checked={online} onChange={(e) => setOnline(e.target.checked)} className="h-5 w-5 accent-white" />
-                Jouer en ligne avec les autres joueurs{!SERVEUR_URL && ' (serveur non configuré)'}
-              </label>
-              {online && pseudo.trim().length < 2 && <p className="text-sm text-[#ff9a8f]">Le pseudo doit compter au moins 2 caractères.</p>}
-            </fieldset>
-            <fieldset>
-              <legend className="eyebrow text-white/60">Lieu</legend>
-              <div className="mt-3 flex flex-wrap gap-2">
-                {([['lome', 'Lomé, quartier administratif'], ['grid', 'Ville imaginaire']] as const).map(([value, label]) => (
-                  <button key={value} type="button" aria-pressed={place === value} onClick={() => setPlace(value)}
-                    className={`min-h-11 rounded-full px-5 text-sm ${place === value ? 'bg-white text-[#0b0c0e]' : 'border border-white/25'}`}>{label}</button>
-                ))}
-              </div>
-              {place === 'grid' && <p className="mt-2 text-sm text-white/70">Plus légère, pour les téléphones modestes.</p>}
-            </fieldset>
-            <fieldset className="mt-6">
-              <legend className="eyebrow text-white/60">Couleur</legend>
-              <div className="mt-3 flex flex-wrap gap-2">
-                {COLORS.map((c) => (
-                  <button key={c.id} type="button" aria-pressed={c.id === color.id} aria-label={c.label} title={c.label} onClick={() => setColor(c)}
-                    className={`flex h-11 w-11 items-center justify-center rounded-full border ${c.id === color.id ? 'border-white' : 'border-white/25'}`}>
-                    <span className="h-7 w-7 rounded-full" style={{ background: c.swatch }} />
-                  </button>
-                ))}
-              </div>
-              <p className="mt-2 text-sm text-white/70">{color.label}</p>
-            </fieldset>
-            <fieldset className="mt-6">
-              <legend className="eyebrow text-white/60">Ambiance</legend>
-              <div className="mt-3 flex gap-2">
-                {[[false, 'Jour'], [true, 'Nuit']].map(([value, label]) => (
-                  <button key={String(label)} type="button" aria-pressed={night === value} onClick={() => setNight(value as boolean)}
-                    className={`min-h-11 rounded-full px-5 text-sm ${night === value ? 'bg-white text-[#0b0c0e]' : 'border border-white/25'}`}>{label}</button>
-                ))}
-              </div>
-            </fieldset>
-            <div className="mt-8 grid gap-3">
-              <button ref={start} type="button" onClick={() => launch(false)} className="btn btn-light w-full">Prendre le volant</button>
-              <button type="button" onClick={() => launch(true)} className="btn btn-ghost w-full">Conduite libre</button>
-              <button type="button" onClick={() => launch(true, true)} className="btn btn-ghost w-full">Se promener avec Honorable</button>
-              {place === 'lome' && <button type="button" onClick={() => { setWantSearch(true); launch(true); }} className="btn btn-ghost w-full">Aller à un lieu</button>}
-            </div>
-            {best > 0 && <p className="num mt-4 text-sm text-white/70">Votre record : {best} points</p>}
+            <label className="block text-sm" htmlFor="pseudo">Votre pseudo, vu par les autres joueurs</label>
+            <input id="pseudo" value={pseudo} maxLength={20} onChange={(e) => setPseudo(e.target.value)} autoComplete="nickname"
+              onKeyDown={(e) => { if (e.key === 'Enter') launch(!parcours); }}
+              className="mt-2 min-h-11 w-full rounded-full border border-white/30 bg-black/30 px-4 text-base text-white placeholder:text-white/50" />
+            {pseudo.trim().length < 2 && <p className="mt-1 text-sm text-[#ff9a8f]">Le pseudo doit compter au moins 2 caractères.</p>}
+            <button ref={start} type="button" onClick={() => launch(!parcours)} className="btn btn-light mt-6 w-full text-lg">Jouer</button>
+            <p className="mt-3 text-sm text-white/70">
+              {!SERVEUR_URL ? 'Jeu en ligne non configuré : vous jouerez seul.' : place === 'grid' ? 'Ville imaginaire : partie seule, plus légère.' : 'Vous rejoignez les autres joueurs connectés à Lomé.'}
+              {parcours && ' Parcours guidé noté jusqu’à l’IAI-Togo.'}
+            </p>
+            <details className="mt-6 border-t border-white/15 pt-4">
+              <summary className="min-h-11 cursor-pointer py-2 text-sm text-white/80">Réglages (facultatif)</summary>
+              <fieldset className="mt-3">
+                <legend className="eyebrow text-white/60">Couleur de la voiture</legend>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {COLORS.map((c) => (
+                    <button key={c.id} type="button" aria-pressed={c.id === color.id} aria-label={c.label} title={c.label} onClick={() => setColor(c)}
+                      className={`flex h-11 w-11 items-center justify-center rounded-full border ${c.id === color.id ? 'border-white' : 'border-white/25'}`}>
+                      <span className="h-7 w-7 rounded-full" style={{ background: c.swatch }} />
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-2 text-sm text-white/70">{color.label}</p>
+              </fieldset>
+              <fieldset className="mt-5">
+                <legend className="eyebrow text-white/60">Ambiance au départ</legend>
+                <div className="mt-3 flex gap-2">
+                  {[[false, 'Jour'], [true, 'Nuit']].map(([value, label]) => (
+                    <button key={String(label)} type="button" aria-pressed={night === value} onClick={() => setNight(value as boolean)}
+                      className={`min-h-11 rounded-full px-5 text-sm ${night === value ? 'bg-white text-[#0b0c0e]' : 'border border-white/25'}`}>{label}</button>
+                  ))}
+                </div>
+              </fieldset>
+              <p className="mt-4 text-sm text-white/60">Autres façons de jouer : <a className="underline" href="?mode=parcours">parcours guidé noté</a> · <a className="underline" href="?ville=imaginaire">ville imaginaire, plus légère</a>{(parcours || place === 'grid') && <> · <a className="underline" href="?">partie normale</a></>}</p>
+            </details>
+            {parcours && best > 0 && <p className="num mt-4 text-sm text-white/70">Votre record : {best} points</p>}
             {phase === 'unsupported' && <p role="alert" className="mt-4 text-sm">Votre navigateur ne peut pas afficher la 3D. <a className="underline" href={`${SITE_URL}/contact?demande=essai`}>Réservez directement un essai.</a></p>}
             {phase === 'error' && <p role="alert" className="mt-4 text-sm">Le jeu n’a pas pu se charger. Vérifiez votre connexion et réessayez.</p>}
           </div>
@@ -512,6 +505,11 @@ export function Jeu() {
 
               {hud.inside && <p className="glass pointer-events-none absolute left-1/2 top-[max(5.5rem,env(safe-area-inset-top))] -translate-x-1/2 whitespace-nowrap rounded-full px-4 py-1.5 text-xs [@media(max-height:480px)]:top-3">{hud.inside.startsWith('IAI-Togo') ? `${hud.inside} · couloirs et escaliers d’après vidéo, salles supposées` : `Intérieur imaginé · ${hud.inside}`}</p>}
 
+              {hud.online && game.current?.reseau && !searching && !paused && !(result && !dismissed) && (
+                <Communication reseau={game.current.reseau} joueurs={hud.online.joueurs} enLigne={hud.online.statut === 'en-ligne'}
+                  onNotice={(text) => setToast({ id: ++toastId.current, text })} onTyping={() => game.current?.releaseAll()}
+                  onNavigate={(nom, x, z) => { if (!game.current?.navigate(nom, x, z)) setToast({ id: ++toastId.current, text: `Aucun itinéraire trouvé jusqu’à ${nom}.` }); }} />
+              )}
               {hud.smart && <SmartAIFrame t={hud.smart} />}
               {hud.smart && <SmartAIDashboard t={hud.smart} />}
               {hud.shop && (

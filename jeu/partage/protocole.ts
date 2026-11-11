@@ -24,6 +24,15 @@ export type Genre = (typeof GENRES)[number];
 
 export const TYPE_ETAT = 1;
 export const TYPE_INSTANTANE = 2;
+/** Message vocal (talkie-walkie) : client → serveur [3][format][audio], serveur → client [3][id u16][format][audio]. */
+export const TYPE_VOIX = 3;
+/** Formats audio des messages vocaux, selon ce que le navigateur sait enregistrer. L'ordre ne change jamais. */
+export const FORMATS_VOIX = ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/mp4'] as const;
+/** Un message vocal dure au plus VOIX_DUREE_MAX secondes et pèse au plus VOIX_MAX_OCTETS (Opus à 16 kbit/s : 30 Ko pour 15 s). */
+export const VOIX_DUREE_MAX = 15;
+export const VOIX_MAX_OCTETS = 64000;
+/** Longueur maximale d'un message écrit. */
+export const CHAT_MAX = 200;
 
 /** Bits de « drapeaux ». */
 export const DRAPEAU = { course: 1, air: 2, salut: 4, assis: 8, dedans: 16 } as const;
@@ -140,12 +149,50 @@ export function nettoieNom(v: unknown): string | null {
   return s.length >= 2 ? s : null;
 }
 
+/** Message écrit : sans caractères de contrôle, espaces resserrés, 1 à CHAT_MAX caractères. */
+export function nettoieMessage(v: unknown): string | null {
+  if (typeof v !== 'string') return null;
+  const s = v.normalize('NFC').replace(/[\p{Cc}\p{Cf}]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, CHAT_MAX);
+  return s.length ? s : null;
+}
+
+/** Message vocal d'un client : encodage, puis lecture par le serveur (null s'il est mal formé ou trop lourd). */
+export function encodeVoix(format: number, audio: Uint8Array): Uint8Array {
+  const out = new Uint8Array(2 + audio.byteLength);
+  out[0] = TYPE_VOIX; out[1] = format; out.set(audio, 2);
+  return out;
+}
+export function decodeVoixClient(b: Uint8Array): { format: number; audio: Uint8Array } | null {
+  if (b.byteLength < 3 || b[0] !== TYPE_VOIX || b[1]! >= FORMATS_VOIX.length || b.byteLength - 2 > VOIX_MAX_OCTETS) return null;
+  return { format: b[1]!, audio: b.subarray(2) };
+}
+/** Relais d'un message vocal par le serveur, avec l'auteur. */
+export function encodeVoixRelais(id: number, format: number, audio: Uint8Array): Uint8Array {
+  const out = new Uint8Array(4 + audio.byteLength);
+  out[0] = TYPE_VOIX; out[1] = id & 0xff; out[2] = id >> 8; out[3] = format; out.set(audio, 4);
+  return out;
+}
+export function decodeVoixRelais(b: Uint8Array): { id: number; format: number; audio: Uint8Array } | null {
+  if (b.byteLength < 5 || b[0] !== TYPE_VOIX || b[3]! >= FORMATS_VOIX.length) return null;
+  return { id: b[1]! | (b[2]! << 8), format: b[3]!, audio: b.subarray(4) };
+}
+
+/** Position d'un joueur de la salle sur la carte : id, pseudo, x, z (au mètre), 1 s'il est dans un bâtiment. */
+export type PointCarte = [id: number, nom: string, x: number, z: number, dedans: 0 | 1];
+
 /** Messages texte. */
-export type DuClient = { t: 'bonjour'; v: number; nom: string; apparence: Apparence };
+export type DuClient = { t: 'bonjour'; v: number; nom: string; apparence: Apparence } | { t: 'chat'; txt: string };
 export type DuServeur =
   | { t: 'bienvenue'; id: number; salle: string; joueurs: number }
   | { t: 'arrivee'; id: number; nom: string; apparence: Apparence }
   | { t: 'depart'; id: number }
   | { t: 'population'; salle: number; total: number }
+  /** Tous les joueurs de la salle et leur position, toutes les 2 secondes : pour la carte et la liste des joueurs. */
+  | { t: 'carte'; j: PointCarte[] }
+  /** Message écrit, envoyé à toute la salle (l'auteur le reçoit aussi : c'est sa confirmation). */
+  | { t: 'chat'; id: number; nom: string; txt: string; at: number }
+  /** Derniers messages de la salle, à l'arrivée. */
+  | { t: 'historique'; m: { id: number; nom: string; txt: string; at: number }[] }
+  | { t: 'trop-vite' }
   | { t: 'refus'; raison: 'complet' | 'version' | 'nom' | 'apparence' }
   | { t: 'au-revoir' };

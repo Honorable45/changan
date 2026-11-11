@@ -69,7 +69,7 @@ export default async function VehiclePage({ params }: P) {
               <div><dt className="sr-only">Disponibilité</dt><dd>{AVAILABILITY[v.availability]}</dd></div>
             </dl>
           </div>
-          <div className="md:col-span-6 md:flex md:justify-end"><div><ContactActions tone="dark" whatsapp={site.whatsappNumber} vehicleSlug={v.slug} vehicleName={v.name} versions={versionNames} /></div></div>
+          <div className="md:col-span-6 md:flex md:justify-end"><div><ContactActions tone="dark" whatsapp={site.whatsappNumber} vehicleSlug={v.slug} vehicleName={v.name} versions={versionNames} /><Link href="/essai-virtuel" className="mt-3 inline-flex min-h-11 items-center text-sm text-white/80 underline underline-offset-4 hover:text-white">Prendre le volant en essai virtuel</Link></div></div>
         </div>
       </section>
 
