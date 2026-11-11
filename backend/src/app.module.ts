@@ -10,12 +10,13 @@ import { PrismaService } from './common/prisma.service';
 import { MediaService } from './media/media.service';
 import { StorageService } from './media/storage.service';
 import { RequestsController } from './requests/requests.controller';
+import { RetentionService } from './requests/retention.service';
 
 @Module({
   imports: [ThrottlerModule.forRoot([{ ttl: 60_000, limit: Number(process.env.RATE_LIMIT_PER_MINUTE ?? 600) }])],
   controllers: [CatalogController, RequestsController, AuthController, AdminController],
   providers: [
-    PrismaService, StorageService, MediaService, AdminGuard,
+    PrismaService, StorageService, MediaService, AdminGuard, RetentionService,
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_FILTER, useClass: PrismaExceptionFilter },
   ],

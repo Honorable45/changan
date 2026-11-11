@@ -32,6 +32,7 @@ const PICTOS = {
 const Picto = ({ n, className = 'h-5 w-5' }: { n: keyof typeof PICTOS; className?: string }) => (
   <svg aria-hidden="true" viewBox="0 0 24 24" className={`${className} fill-none stroke-current`} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{PICTOS[n]}</svg>
 );
+const cleJoueur = (id: number, nom: string) => `${id}:${nom}`;
 const distanceTexte = (m: number) => (m >= 1000 ? `${(m / 1000).toFixed(1).replace('.', ',')} km` : `${m} m`);
 const heure = (t: number) => new Date(t).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
 
@@ -40,7 +41,9 @@ export function Communication({ reseau, joueurs, enLigne, onNotice, onNavigate, 
   const [messages, setMessages] = useState<MessageJeu[]>(() => [...reseau.messages]);
   const [nonLus, setNonLus] = useState(0);
   const [texte, setTexte] = useState('');
-  const [ignores, setIgnores] = useState<Set<number>>(() => new Set());
+  // Ignorés par numéro ET pseudo : un numéro libéré puis repris par un autre joueur n'hérite pas de la mise à l'écart.
+  const [ignores, setIgnores] = useState<Set<string>>(() => new Set());
+  const [signales, setSignales] = useState<Set<string>>(() => new Set());
   const [parle, setParle] = useState<string | null>(null);
   const [voixMuette, setVoixMuette] = useState(false);
   const [enreg, setEnreg] = useState<number | null>(null);
@@ -59,7 +62,7 @@ export function Communication({ reseau, joueurs, enLigne, onNotice, onNavigate, 
     const l = creerLecteur(setParle);
     lecteur.current = l;
     const stop = reseau.ecouter((m) => {
-      if (ignoresRef.current.has(m.id) && !m.moi) return;
+      if (ignoresRef.current.has(cleJoueur(m.id, m.nom)) && !m.moi) return;
       setMessages([...reseau.messages]);
       if (panneauRef.current !== 'discussion' && !m.moi) setNonLus((n) => n + 1);
       if (!m.moi) {
@@ -131,13 +134,23 @@ export function Communication({ reseau, joueurs, enLigne, onNotice, onNavigate, 
     setTexte('');
   };
   const basculerIgnore = (id: number, nom: string) => {
+    const k = cleJoueur(id, nom);
     setIgnores((s) => {
       const n = new Set(s);
-      if (n.has(id)) { n.delete(id); onNotice(`Vous recevez de nouveau les messages de ${nom}.`); } else { n.add(id); onNotice(`${nom} est ignoré : ses messages ne vous parviennent plus.`); }
+      if (n.has(k)) { n.delete(k); onNotice(`Vous recevez de nouveau les messages de ${nom}.`); } else { n.add(k); onNotice(`${nom} est ignoré : ses messages ne vous parviennent plus.`); }
       return n;
     });
   };
-  const visibles = messages.filter((m) => m.moi || !ignores.has(m.id));
+  /** Signaler : prévient le serveur (sourdine collective au-delà d'un seuil) et ignore aussitôt ce joueur pour soi. */
+  const signaler = (id: number, nom: string) => {
+    const k = cleJoueur(id, nom);
+    reseau.signaler(id);
+    setSignales((s) => new Set(s).add(k));
+    setIgnores((s) => new Set(s).add(k));
+    onNotice(`${nom} est signalé et ignoré. S’il est signalé par d’autres joueurs, il sera mis en sourdine pour tous.`);
+  };
+  const visibles = messages.filter((m) => m.moi || !ignores.has(cleJoueur(m.id, m.nom)));
+  const muet = reseau.muet;
   const bouton = 'glass relative flex h-11 w-11 items-center justify-center rounded-full';
 
   return (
@@ -145,7 +158,7 @@ export function Communication({ reseau, joueurs, enLigne, onNotice, onNavigate, 
       {/* Messages récents, discussion fermée */}
       {!panneau && recents.length > 0 && (
         <ul aria-hidden="true" className="flex max-w-[min(18rem,55vw)] flex-col items-end gap-1.5" data-testid="messages-recents">
-          {recents.filter((m) => !ignores.has(m.id)).map((m) => (
+          {recents.filter((m) => !ignores.has(cleJoueur(m.id, m.nom))).map((m) => (
             <li key={m.cle} className="glass rounded-2xl px-3 py-1.5 text-xs leading-snug">
               <span className="font-semibold" style={{ color: couleurJoueur(m.id) }}>{m.nom}</span>{' '}
               {m.txt ?? <span className="text-white/75">message vocal</span>}
@@ -169,14 +182,17 @@ export function Communication({ reseau, joueurs, enLigne, onNotice, onNavigate, 
                 <li key={j.id} className="flex items-center gap-2 border-b border-white/10 py-2" data-testid="joueur">
                   <span aria-hidden="true" className="h-3 w-3 shrink-0 rounded-full" style={{ background: couleurJoueur(j.id) }} />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate font-medium">{j.nom}{ignores.has(j.id) && <span className="text-white/50"> · ignoré</span>}</span>
+                    <span className="block truncate font-medium">{j.nom}{ignores.has(cleJoueur(j.id, j.nom)) && <span className="text-white/50"> · {signales.has(cleJoueur(j.id, j.nom)) ? 'signalé' : 'ignoré'}</span>}</span>
                     <span className="num flex items-center gap-1 text-xs text-white/65">
                       {!j.dedans && <span aria-hidden="true" className="inline-block" style={{ transform: `rotate(${-j.cap}rad)` }}>↑</span>}
                       {distanceTexte(j.distance)}{j.dedans && ' · dans un bâtiment'}
                     </span>
                   </span>
                   <button type="button" onClick={() => { onNavigate(j.nom, j.x, j.z); setPanneau(null); }} className="min-h-9 shrink-0 rounded-full bg-white px-3 text-xs font-medium text-[#0b0c0e]">Y aller</button>
-                  <button type="button" onClick={() => basculerIgnore(j.id, j.nom)} aria-pressed={ignores.has(j.id)} className="min-h-9 shrink-0 px-1 text-xs underline underline-offset-2">{ignores.has(j.id) ? 'Écouter' : 'Ignorer'}</button>
+                  <span className="flex shrink-0 flex-col items-end">
+                    <button type="button" onClick={() => basculerIgnore(j.id, j.nom)} aria-pressed={ignores.has(cleJoueur(j.id, j.nom))} className="min-h-7 px-1 text-xs underline underline-offset-2">{ignores.has(cleJoueur(j.id, j.nom)) ? 'Écouter' : 'Ignorer'}</button>
+                    {!signales.has(cleJoueur(j.id, j.nom)) && <button type="button" onClick={() => signaler(j.id, j.nom)} className="min-h-7 px-1 text-xs text-[#ff9a8f] underline underline-offset-2" data-testid="signaler">Signaler</button>}
+                  </span>
                 </li>
               ))}
             </ul>
@@ -204,7 +220,8 @@ export function Communication({ reseau, joueurs, enLigne, onNotice, onNavigate, 
                   className="min-h-10 w-full min-w-0 rounded-full border border-white/30 bg-black/30 px-3.5 text-base text-white placeholder:text-white/50 md:text-sm" />
                 <button type="submit" aria-label="Envoyer" disabled={!texte.trim() || !enLigne} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white text-[#0b0c0e] disabled:opacity-40"><Picto n="envoyer" /></button>
               </form>
-              {reseau.tropVite && <p role="status" className="mt-1 text-[.7rem] text-[#f2c14e]">Doucement : un message à la fois.</p>}
+              {reseau.tropVite && !muet && <p role="status" className="mt-1 text-[.7rem] text-[#f2c14e]">Doucement : un message à la fois.</p>}
+              {muet > 0 && <p role="status" className="mt-1 text-[.7rem] text-[#ff9a8f]" data-testid="sourdine">Vous avez été signalé par plusieurs joueurs : vos messages ne sont plus transmis pendant {Math.ceil(muet / 60)} min.</p>}
             </>
           )}
         </section>

@@ -113,6 +113,45 @@ test('SMART AI 3 : moto lente devant, le véhicule ralentit et garde ses distanc
   assert.ok(!events.includes('hit'));
 });
 
+test('Klaxon, conduite manuelle : la voiture devant se range à droite et s’arrête, puis reprend sa voie une fois dépassée', () => {
+  const { sim, step } = road();
+  sim.traffic.push({ x: -2, z: 40, heading: 0, speed: 4, cruise: 4, color: 0, targets: [[-2, 790]], edge: 0, kind: 'berline' });
+  const t = sim.traffic[0];
+  step(1);
+  assert.equal(sim.honk(), 1, 'un véhicule devant se range');
+  step(6);
+  assert.ok(t.x < -3.2, `rangé à droite (x = ${t.x.toFixed(2)}, voie à −2)`);
+  assert.ok(t.speed < 0.3, `arrêté pour laisser passer (${t.speed.toFixed(2)} m/s)`);
+  // Un véhicule qui arrive en face n'est pas concerné.
+  Object.assign(sim.car, { z: t.z - 15, speed: 0 });
+  sim.traffic.push({ x: 2, z: 60, heading: Math.PI, speed: 6, cruise: 6, color: 0, targets: [[2, 0]], edge: 1, kind: 'berline' });
+  assert.equal(sim.honk(), 1, 'seul celui de devant, dans le même sens');
+  sim.traffic.pop();
+  // Le joueur le dépasse : il revient dans sa voie et repart.
+  Object.assign(sim.car, { x: 2, z: t.z + 15, speed: 0 });
+  step(8);
+  assert.ok(Math.abs(t.x + 2) < 0.5, `revenu dans sa voie (x = ${t.x.toFixed(2)})`);
+  assert.ok(t.speed > 3, 'reparti');
+});
+
+test('Klaxon avec SMART AI : la voiture lente devant se range, SMART AI la dépasse sans aucun choc', () => {
+  const { sim, ai, events, step } = road();
+  sim.traffic.push({ x: -2, z: 45, heading: 0, speed: 2, cruise: 2, color: 0, targets: [[-2, 790]], edge: 0, kind: 'berline' });
+  const t = sim.traffic[0];
+  ai.setActive(true, sim);
+  step(10);
+  assert.ok(sim.car.z < t.z, 'SMART AI suit la voiture lente');
+  let closest = Infinity, passed = -1;
+  for (let i = 0; i < 40 && passed < 0; i++) {
+    sim.honk();
+    step(0.5, undefined, () => { closest = Math.min(closest, Math.hypot(sim.car.x - t.x, sim.car.z - t.z)); });
+    if (sim.car.z > t.z + 8) passed = i * 0.5;
+  }
+  assert.ok(passed >= 0, `SMART AI a dépassé la voiture klaxonnée (voiture à z = ${t.z.toFixed(0)}, joueur à ${sim.car.z.toFixed(0)})`);
+  assert.ok(!events.includes('hit'), 'aucun choc');
+  assert.ok(closest > 2.1, `jamais au contact (${closest.toFixed(2)} m entre les centres)`);
+});
+
 test('SMART AI 4 : un mur barre toute la rue, arrêt avant lui, puis demi-tour pour rebrousser chemin', () => {
   const wall = [[-8, 120], [8, 120], [8, 121], [-8, 121]];
   const { sim, ai, events, step } = road({ colliders: [wall] });

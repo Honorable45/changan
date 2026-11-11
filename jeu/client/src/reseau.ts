@@ -32,7 +32,7 @@ export function creerReseau(url: string, nom: string, apparence: Apparence) {
   let monId = -1, carte: JoueurCarte[] = [];
   let messages: MessageJeu[] = [];
   const ecouteurs = new Set<(m: MessageJeu) => void>();
-  let tropVite = 0;
+  let tropVite = 0, muetJusqua = 0, raison: string | null = null;
   const nomDe = (id: number) => fiches.get(id)?.nom ?? carte.find((c) => c.id === id)?.nom ?? 'Joueur';
   const ajouter = (m: Omit<MessageJeu, 'cle'>) => {
     const full = { ...m, cle: ++cleMessage };
@@ -73,15 +73,16 @@ export function creerReseau(url: string, nom: string, apparence: Apparence) {
       }
       let m: DuServeur;
       try { m = JSON.parse(ev.data); } catch { return; }
-      if (m.t === 'bienvenue') { statut = 'en-ligne'; attente = 1000; salle = m.salle; monId = m.id; population = { salle: m.joueurs, total: m.joueurs }; }
+      if (m.t === 'bienvenue') { statut = 'en-ligne'; attente = 1000; salle = m.salle; monId = m.id; if (m.nom) nom = m.nom; population = { salle: m.joueurs, total: m.joueurs }; }
       else if (m.t === 'carte') carte = m.j.map(([id, n, x, z, d]: PointCarte) => ({ id, nom: n, x, z, dedans: d === 1 }));
       else if (m.t === 'chat') ajouter({ id: m.id, nom: m.nom, txt: m.txt, at: m.at, moi: m.id === monId });
       else if (m.t === 'historique') { for (const h of m.m) if (!messages.some((x) => x.at === h.at && x.id === h.id)) ajouter({ ...h, moi: false }); }
       else if (m.t === 'trop-vite') tropVite = performance.now();
+      else if (m.t === 'muet') muetJusqua = Date.now() + m.secondes * 1000;
       else if (m.t === 'arrivee') fiches.set(m.id, { nom: m.nom, apparence: m.apparence });
       else if (m.t === 'depart') { fiches.delete(m.id); tampons.delete(m.id); }
       else if (m.t === 'population') population = { salle: m.salle, total: m.total };
-      else if (m.t === 'refus') { statut = 'refus'; fermeVolontaire = m.raison !== 'complet'; }
+      else if (m.t === 'refus') { statut = 'refus'; raison = m.raison; fermeVolontaire = m.raison !== 'complet'; }
     };
     ws.onclose = () => {
       fiches.clear(); tampons.clear(); decalage = null; carte = []; monId = -1;
@@ -134,6 +135,14 @@ export function creerReseau(url: string, nom: string, apparence: Apparence) {
     /** Tous les joueurs de la salle (sauf soi), positions mises à jour toutes les 2 secondes. */
     joueurs(): JoueurCarte[] { return carte.filter((c) => c.id !== monId); },
     get monId() { return monId; },
+    /** Pseudo retenu par le serveur (complété d'un numéro s'il était déjà pris). */
+    get nom() { return nom; },
+    /** Raison du dernier refus du serveur (pseudo réservé…). */
+    get raison() { return raison; },
+    /** Secondes de sourdine restantes après des signalements, 0 sinon. */
+    get muet() { return Math.max(0, Math.ceil((muetJusqua - Date.now()) / 1000)); },
+    /** Signale un joueur de la salle : au-delà d'un seuil de signalements, il est mis en sourdine. */
+    signaler(id: number) { if (ws && ws.readyState === WebSocket.OPEN && statut === 'en-ligne') ws.send(JSON.stringify({ t: 'signaler', id })); },
     get messages(): readonly MessageJeu[] { return messages; },
     /** Le serveur a refusé un message trop rapproché il y a moins de 3 s. */
     get tropVite() { return performance.now() - tropVite < 3000; },

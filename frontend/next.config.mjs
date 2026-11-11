@@ -27,6 +27,9 @@ export default {
         { key: 'X-Content-Type-Options', value: 'nosniff' },
         { key: 'X-Frame-Options', value: 'DENY' },
         { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+        // Défense en profondeur sans gêner Next.js : pas de cadre, pas de plugin, pas de <base> ni de formulaire vers un autre site.
+        { key: 'Content-Security-Policy', value: "frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'" },
+        { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=(), payment=(), usb=()' },
       ],
     }];
   },

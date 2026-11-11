@@ -29,7 +29,8 @@
     "overrides": {
       "multer": ">=2.5.0",
       "postcss": ">=8.5.23",
-      "js-yaml": ">=5.4.1"
+      "js-yaml": ">=5.4.1",
+      "deepmerge-ts": ">=8.0.0"
     }
   }
 }

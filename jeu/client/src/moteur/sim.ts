@@ -69,7 +69,13 @@ export type Step = { kind: 'ignite' | 'gate' | 'stop' | 'park'; text: string; x:
 export type Park = { x: number; z: number; heading: number; halfW: number; halfL: number };
 export type GameEvent = 'hit' | 'red' | 'speed' | 'signal' | 'gate' | 'green' | 'done' | 'bounds' | 'arrived' | 'reroute' | 'walker' | 'exit' | 'board' | 'room' | 'outside' | 'lift' | 'use' | 'nid';
 export type Result = { score: number; stars: number; time: number; hits: number; reds: number; signals: number; signalTotal: number; speeding: number };
-export type TrafficCar = { x: number; z: number; heading: number; speed: number; cruise: number; color: number; targets: Pt[]; edge: number; kind: VehicleKind };
+export type TrafficCar = {
+  x: number; z: number; heading: number; speed: number; cruise: number; color: number; targets: Pt[]; edge: number; kind: VehicleKind;
+  /** Klaxonné : temps restant pendant lequel il se range à droite et s'arrête pour laisser passer, et décalage appliqué à sa voie. */
+  yieldT?: number; aside?: number;
+  /** Point proche, 10 m devant, par lequel il glisse vers le bord ou revient dans sa voie. */
+  merge?: Pt;
+};
 
 export type World = {
   kind: 'grid' | 'lome';
@@ -811,6 +817,64 @@ export class GameSim {
       const dx = (q[0] - prev[0]) / len, dz = (q[1] - prev[1]) / len;
       return [q[0] - dz * e.l, q[1] + dx * e.l] as Pt;
     });
+    // Rangé sur le côté quand il change de rue : il le reste dans la nouvelle.
+    if (car.aside) { const a = car.aside; car.aside = 0; this.shiftLane(car, Math.min(a, this.asideRoom(car)), false); }
+  }
+
+  /** Décale les points de la voie restants vers le bord droit (positif) ou les ramène (négatif), en passant par un point 10 m devant. */
+  private shiftLane(car: TrafficCar, by: number, glide = true) {
+    if (Math.abs(by) < 0.05) return;
+    const fx = Math.sin(car.heading), fz = Math.cos(car.heading);
+    let px = car.x, pz = car.z;
+    car.targets = car.targets.map((q) => {
+      const len = Math.hypot(q[0] - px, q[1] - pz) || 1;
+      const dx = (q[0] - px) / len, dz = (q[1] - pz) / len;
+      px = q[0]; pz = q[1];
+      return [q[0] - dz * by, q[1] + dx * by] as Pt;
+    });
+    car.aside = (car.aside ?? 0) + by;
+    // Les points d'une rue droite sont parfois à des centaines de mètres : sans ce point proche, le véhicule ne glisserait presque pas.
+    if (glide) {
+      car.merge = [car.x + fx * 10 - fz * by, car.z + fz * 10 + fx * by];
+      car.targets.unshift(car.merge);
+    }
+  }
+
+  /**
+   * Place pour se ranger à droite : jusqu'au bord de la chaussée, et jusqu'à 1,2 m sur le bas-côté s'il est praticable
+   * (ni mur, ni eau) sur les 15 m qui suivent.
+   */
+  private asideRoom(car: TrafficCar) {
+    const e = this.world.edges[car.edge];
+    if (!e) return 0;
+    const hw = halfWidth(car.kind);
+    const onRoad = Math.max(0, e.r - e.l - hw - 0.25);
+    const fx = Math.sin(car.heading), fz = Math.cos(car.heading);
+    // Bord droit du sens de marche : même côté que le décalage de la voie.
+    const sx = -fz, sz = fx;
+    const shoulderOk = (extra: number) => [0, 5, 10, 15].every((d) => this.drivable(car.x + fx * d + sx * (onRoad + extra + hw), car.z + fz * d + sz * (onRoad + extra + hw)));
+    return onRoad + (shoulderOk(1.2) ? 1.2 : shoulderOk(0.6) ? 0.6 : 0);
+  }
+
+  /**
+   * Coup de klaxon du joueur : les véhicules de la circulation devant lui, dans son sens, à moins de 40 m,
+   * se rangent à droite et s'arrêtent le temps qu'il passe (8 s au plus), puis reprennent leur voie.
+   * Renvoie le nombre de véhicules qui se rangent.
+   */
+  honk() {
+    if (this.mode !== 'car' || this.room || this.car.y > 2) return 0;
+    const c = this.car, fx = Math.sin(c.heading), fz = Math.cos(c.heading);
+    let n = 0;
+    for (const t of this.traffic) {
+      const dx = t.x - c.x, dz = t.z - c.z;
+      const ahead = dx * fx + dz * fz, side = Math.abs(dx * fz - dz * fx);
+      // Devant, dans la même voie ou la voisine, et dans le même sens (pas ceux qui arrivent en face).
+      if (ahead < 2 || ahead > 40 || side > 4.5 || Math.cos(wrap(t.heading - c.heading)) < 0.5) continue;
+      if (!t.yieldT || t.yieldT <= 0) this.shiftLane(t, this.asideRoom(t) - (t.aside ?? 0));
+      t.yieldT = 8;
+      n++;
+    }
+    return n;
   }
 
   private spawn(car: TrafficCar) {
@@ -884,12 +948,24 @@ export class GameSim {
       // Avec l'anti-collision SMART AI, elle seule décide : elle voit tout ce que voit la règle simple, et règle les priorités.
       if (this.safety) want = Math.min(want, this.safety.guard(this, t, index));
       else if (gap < 11) want = Math.min(want, Math.max(0, (gap - 5) * 1.2));
+      // Klaxonné : il se range (au pas le temps de se décaler), s'arrête, et repart une fois dépassé par le joueur.
+      if (t.yieldT !== undefined && t.yieldT > 0) {
+        t.yieldT -= dt;
+        const dx = this.car.x - t.x, dz = this.car.z - t.z;
+        const passed = this.mode !== 'car' || dx * fx + dz * fz > 7;
+        if (passed || t.yieldT <= 0) { t.yieldT = 0; this.shiftLane(t, -(t.aside ?? 0)); }
+        else {
+          // Au pas jusqu'au point de rangement, puis arrêt.
+          want = Math.min(want, t.merge && t.targets[0] === t.merge ? 2.5 : 0);
+        }
+      }
       t.speed += Math.max(-8, Math.min(2.5, (want - t.speed) * 2)) * dt;
       const aim = Math.atan2(target[0] - t.x, target[1] - t.z);
       t.heading += Math.max(-1.8 * dt, Math.min(1.8 * dt, wrap(aim - t.heading))) * Math.min(1, t.speed / 2);
       t.x += Math.sin(t.heading) * t.speed * dt;
       t.z += Math.cos(t.heading) * t.speed * dt;
-      if (dist < 2.5) t.targets.shift();
+      // Le point de rangement est atteint au plus près, pour que le véhicule soit vraiment sur le côté.
+      if (dist < (target === t.merge ? 0.6 : 2.5)) t.targets.shift();
     }
   }
 

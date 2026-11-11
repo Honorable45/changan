@@ -97,6 +97,11 @@ services:
     restart: unless-stopped
     environment:
       ORIGINES: https://${JEU_DOMAIN}
+      # Caddy est le seul mandataire : il remplace X-Forwarded-For par l'adresse réelle du joueur. Sans ce réglage,
+      # tous les joueurs auraient l'adresse de Caddy et partageraient une seule limite de connexions.
+      TRUST_PROXY: "1"
+      # Beaucoup de joueurs mobiles partagent une adresse (CGNAT des opérateurs) : 30 connexions par adresse.
+      CONNEXIONS_PAR_IP: ${JEU_CONNEXIONS_PAR_IP:-30}
       MAX_JOUEURS: ${JEU_MAX_JOUEURS:-1500}
       CAPACITE_SALLE: ${JEU_CAPACITE_SALLE:-60}
       # Savoir appris des joueurs, partagé par toutes les instances (fusionné toutes les 30 s).

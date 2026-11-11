@@ -427,6 +427,28 @@ export function createGame(host: HTMLElement, options: GameOptions) {
   let basket: { id: string; name: string; price: number }[] = [];
   let bag = 0;
   const notice = (text: string) => options.onNotice?.(text);
+  /*
+   * Klaxon, en conduite manuelle comme avec SMART AI : tant qu'il est tenu, les véhicules devant, dans le même sens,
+   * se rangent à droite et s'arrêtent pour laisser passer (voir GameSim.honk).
+   */
+  let hornHeld = false, honkClock = 0, honkNoticed = -1e9;
+  const setHorn = (on: boolean) => {
+    if (on === hornHeld) return;
+    hornHeld = on;
+    audio.horn(on);
+    if (on) honkClock = 0;
+  };
+  const honkTick = (dt: number) => {
+    if (!hornHeld) return;
+    honkClock -= dt;
+    if (honkClock > 0) return;
+    honkClock = 0.4;
+    const n = sim.honk();
+    if (n && performance.now() - honkNoticed > 6000) {
+      honkNoticed = performance.now();
+      notice(n > 1 ? `Klaxon : ${n} véhicules se rangent pour vous laisser passer.` : 'Klaxon : le véhicule devant se range pour vous laisser passer.');
+    }
+  };
   /* SMART AI : conduite autonome du véhicule du joueur, avec les vraies données de la simulation. */
   const smart = new SmartAIController(sim);
   /* SMART AI pour tous les véhicules : anti-collision de la circulation, et freinage d'urgence quand le joueur conduit. */
@@ -888,6 +910,7 @@ export function createGame(host: HTMLElement, options: GameOptions) {
   let padOn = false;
   const padPrev: boolean[] = [];
   const pad = { steer: 0, throttle: 0, brake: 0, run: false, jump: false, lift: 0 };
+  let padHorn = false;
   const readPad = () => {
     const gp = [...(navigator.getGamepads?.() ?? [])].find((g) => g && g.connected && g.mapping === 'standard');
     Object.assign(pad, { steer: 0, throttle: 0, brake: 0, run: false, jump: false, lift: 0 });
@@ -910,7 +933,10 @@ export function createGame(host: HTMLElement, options: GameOptions) {
       pad.brake = gp.buttons[6]?.value ?? 0;
       // Hélicoptère : stick droit vers le haut pour monter.
       pad.lift = -dz(gp.axes[3] ?? 0) || (held(5) ? 1 : 0);
-      audio.horn(held(1));
+      // Bouton B de la manette : seuls ses changements comptent, pour ne pas couper le klaxon du clavier ou de l'écran.
+      const b = held(1);
+      if (b !== padHorn) setHorn(b);
+      padHorn = b;
       if (tap(4)) sim.setIndicator(-1);
       if (tap(5)) sim.setIndicator(1);
       tap(2); tap(3);
@@ -1204,6 +1230,7 @@ export function createGame(host: HTMLElement, options: GameOptions) {
     if (paused) return;
     // Quand SMART AI conduit, ses commandes remplacent celles du joueur (clavier, écran tactile, manette).
     let input = readInput(dt);
+    honkTick(dt);
     if (smart.active) input = smart.update(sim, dt) ?? input;
     else if (sim.mode === 'car') {
       // Freinage d'urgence : collision imminente devant la voiture du joueur, SMART AI freine à sa place.
@@ -1286,10 +1313,10 @@ export function createGame(host: HTMLElement, options: GameOptions) {
     touch,
     press(code: string) { keys.add(code); },
     release(code: string) { keys.delete(code); },
-    releaseAll() { keys.clear(); touch.throttle = touch.brake = touch.steer = touch.lift = 0; audio.horn(false); },
+    releaseAll() { keys.clear(); touch.throttle = touch.brake = touch.steer = touch.lift = 0; setHorn(false); },
     start() { audio.start(); },
     ignite() { audio.start(); sim.startEngine(); emit(); },
-    horn(on: boolean) { audio.horn(on); },
+    horn(on: boolean) { audio.start(); setHorn(on); },
     indicator(side: -1 | 1) { sim.setIndicator(side); emit(); },
     toggleView() { view = view === 'chase' ? 'driver' : view === 'driver' ? 'aerial' : 'chase'; setShell(); emit(); },
     act() { audio.start(); sim.act(); emit(); },

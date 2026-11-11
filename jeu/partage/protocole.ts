@@ -181,9 +181,33 @@ export function decodeVoixRelais(b: Uint8Array): { id: number; format: number; a
 export type PointCarte = [id: number, nom: string, x: number, z: number, dedans: 0 | 1];
 
 /** Messages texte. */
-export type DuClient = { t: 'bonjour'; v: number; nom: string; apparence: Apparence } | { t: 'chat'; txt: string };
+export type DuClient = { t: 'bonjour'; v: number; nom: string; apparence: Apparence } | { t: 'chat'; txt: string } | { t: 'signaler'; id: number };
+
+/** Forme simplifiée d'un pseudo pour le comparer : minuscules, sans accents, lettres seules. */
+export const formeNom = (nom: string) => nom.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z]/g, '');
+/** Pseudos qui pourraient passer pour le personnage principal, la marque ou l'équipe du jeu. */
+export const nomReserve = (nom: string) => { const f = formeNom(nom); return ['honorable', 'admin', 'administrateur', 'staff', 'support', 'serveur', 'systeme', 'jeu'].includes(f) || /^(changan|moderat|officiel)/.test(f) || /(changan|officiel)$/.test(f); };
+
+/*
+ * Filtre de grossièretés : mots entiers seulement (« dispute » ou « computer » ne sont pas touchés), lettres remplacées par des étoiles.
+ * Liste volontairement courte : la modération repose d'abord sur « Signaler » et « Ignorer ».
+ */
+const GROSSIERETES = ['connard', 'connards', 'connasse', 'salope', 'salopes', 'pute', 'putes', 'encule', 'encules', 'enculer', 'batard', 'batards', 'fdp', 'ntm', 'nique', 'niquer', 'pd', 'negre', 'negro', 'bougnoule', 'tapette', 'petasse', 'fils de pute'];
+const motsInterdits = new RegExp(`(^|[^\\p{L}\\p{N}])(${GROSSIERETES.map((m) => m.replace(/ /g, '\\s+')).join('|')})(?=$|[^\\p{L}\\p{N}])`, 'giu');
+export function filtreGrossier(txt: string): string {
+  // Chaque caractère est comparé sans son accent, à la même position : le texte rendu garde ses accents.
+  const plain = [...txt].map((c) => { const p = c.normalize('NFD').replace(/[\u0300-\u036f]/g, ''); return p.length === c.length ? p : c; }).join('');
+  let out = '', i = 0;
+  for (const m of plain.matchAll(motsInterdits)) {
+    const debut = m.index! + m[1]!.length, fin = debut + m[2]!.length;
+    out += txt.slice(i, debut) + txt.slice(debut, fin).replace(/\S/g, '*');
+    i = fin;
+  }
+  return out + txt.slice(i);
+}
 export type DuServeur =
-  | { t: 'bienvenue'; id: number; salle: string; joueurs: number }
+  /** `nom` : le pseudo retenu (complété d'un numéro s'il était déjà pris dans la salle). */
+  | { t: 'bienvenue'; id: number; salle: string; joueurs: number; nom: string }
   | { t: 'arrivee'; id: number; nom: string; apparence: Apparence }
   | { t: 'depart'; id: number }
   | { t: 'population'; salle: number; total: number }
@@ -194,5 +218,7 @@ export type DuServeur =
   /** Derniers messages de la salle, à l'arrivée. */
   | { t: 'historique'; m: { id: number; nom: string; txt: string; at: number }[] }
   | { t: 'trop-vite' }
-  | { t: 'refus'; raison: 'complet' | 'version' | 'nom' | 'apparence' }
+  | { t: 'refus'; raison: 'complet' | 'version' | 'nom' | 'nom-reserve' | 'apparence' }
+  /** Assez de joueurs l'ont signalé : ses messages ne sont plus relayés pendant `secondes`. */
+  | { t: 'muet'; secondes: number }
   | { t: 'au-revoir' };

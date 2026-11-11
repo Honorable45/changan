@@ -6,17 +6,28 @@
 
 {$SITE_DOMAIN} {
 	import securite
+	header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
 	reverse_proxy frontend:3000
 }
 
 {$ADMIN_DOMAIN} {
 	import securite
+	header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
 	reverse_proxy admin:3002
 }
 
 # Jeu : /ws vers les instances du serveur en ligne, le reste vers le client statique.
 {$JEU_DOMAIN} {
 	import securite
+	# En-têtes de sécurité du jeu : copie exacte de jeu/client/securite.mjs (vérifiée par le test « en-têtes de sécurité »).
+	header {
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self'; connect-src 'self' wss://{$JEU_DOMAIN}; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+		X-Frame-Options "DENY"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "microphone=(self), camera=(), geolocation=(), payment=(), usb=()"
+		Cross-Origin-Opener-Policy "same-origin"
+	}
 	# /ws : jeu en ligne ; /savoir : passages appris des joueurs par SMART AI.
 	@serveur path /ws /savoir
 	handle @serveur {

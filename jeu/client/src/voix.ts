@@ -60,6 +60,8 @@ export function creerLecteur(surChange: (qui: string | null) => void) {
     const m = file.shift();
     if (!m || muet) { surChange(null); return; }
     const a = new Audio(m.url);
+    // Un peu en dessous du maximum : un message crié ne couvre pas le jeu.
+    a.volume = 0.8;
     actuel = a;
     surChange(m.nom);
     a.onended = a.onerror = () => { if (actuel === a) suivant(); };

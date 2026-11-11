@@ -34,7 +34,9 @@ export class GameStateSensor implements Sensor {
     sim.traffic.forEach((t, i) => {
       if (!near(t.x, t.z)) return;
       const s = VEHICLES[t.kind];
-      out.push({ ...base, id: `vehicule-${i}`, cls: classOf(t.kind), x: t.x, z: t.z, vx: Math.sin(t.heading) * t.speed, vz: Math.cos(t.heading) * t.speed, heading: t.heading, radius: halfWidth(t.kind), length: s.half + s.radius * 0.6, fixed: false });
+      out.push({ ...base, id: `vehicule-${i}`, cls: classOf(t.kind), x: t.x, z: t.z, vx: Math.sin(t.heading) * t.speed, vz: Math.cos(t.heading) * t.speed, heading: t.heading, radius: halfWidth(t.kind), length: s.half + s.radius * 0.6,
+        // Klaxonné, rangé et arrêté : il attend qu'on passe, on le contourne comme un véhicule garé (venue d'en face toujours vérifiée).
+        fixed: !!t.yieldT && t.yieldT > 0 && t.speed < 0.3 });
     });
     sim.parked.forEach((p, i) => {
       if (p.kind === 'helico' || !near(p.x, p.z)) return;

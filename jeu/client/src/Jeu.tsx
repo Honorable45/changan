@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { SAVOIR_URL, SERVEUR_URL, SITE_URL } from './config';
 import { SmartAIButton, SmartAIDashboard, SmartAIFrame } from './SmartAIDashboard';
 import { Communication } from './Communication';
+import { nomReserve } from '../../partage/protocole.ts';
 import type { Game, Hud } from './moteur/engine';
 import { searchPlaces, type Place } from './moteur/nav';
 import type { GameEvent } from './moteur/sim';
@@ -212,7 +213,7 @@ export function Jeu() {
 
   const launch = (pickedFree: boolean, onFoot = false) => {
     if (!webglAvailable()) { setPhase('unsupported'); return; }
-    if (online && pseudo.trim().length < 2) { document.getElementById('pseudo')?.focus(); return; }
+    if (online && (pseudo.trim().length < 2 || nomReserve(pseudo))) { document.getElementById('pseudo')?.focus(); return; }
     setFree(pickedFree);
     setFoot(onFoot);
     setPhase('loading');
@@ -402,6 +403,7 @@ export function Jeu() {
               onKeyDown={(e) => { if (e.key === 'Enter') launch(!parcours); }}
               className="mt-2 min-h-11 w-full rounded-full border border-white/30 bg-black/30 px-4 text-base text-white placeholder:text-white/50" />
             {pseudo.trim().length < 2 && <p className="mt-1 text-sm text-[#ff9a8f]">Le pseudo doit compter au moins 2 caractères.</p>}
+            {nomReserve(pseudo) && <p className="mt-1 text-sm text-[#ff9a8f]" data-testid="pseudo-reserve">Ce pseudo est réservé (personnage, marque ou équipe du jeu) : choisissez-en un autre.</p>}
             <button ref={start} type="button" onClick={() => launch(!parcours)} className="btn btn-light mt-6 w-full text-lg">Jouer</button>
             <p className="mt-3 text-sm text-white/70">
               {!SERVEUR_URL ? 'Jeu en ligne non configuré : vous jouerez seul.' : place === 'grid' ? 'Ville imaginaire : partie seule, plus légère.' : 'Vous rejoignez les autres joueurs connectés à Lomé.'}
@@ -478,7 +480,7 @@ export function Jeu() {
                     {hud.online && (
                       <span className={`${pill} num gap-1.5 text-xs`} data-testid="en-ligne" title={hud.online.statut === 'en-ligne' ? `${hud.online.salle} joueurs dans votre ville, ${hud.online.total} sur ce serveur` : 'Connexion au jeu en ligne'}>
                         <span aria-hidden="true" className={`h-2 w-2 rounded-full ${hud.online.statut === 'en-ligne' ? 'bg-[#35e07a]' : hud.online.statut === 'connexion' ? 'bg-[#f2c14e]' : 'bg-[#ff6a5a]'}`} />
-                        {hud.online.statut === 'en-ligne' ? `${hud.online.salle} en ligne` : hud.online.statut === 'connexion' ? 'Connexion…' : hud.online.statut === 'refus' ? 'Refusé' : 'Hors ligne'}
+                        {hud.online.statut === 'en-ligne' ? `${hud.online.salle} en ligne` : hud.online.statut === 'connexion' ? 'Connexion…' : hud.online.statut === 'refus' ? (game.current?.reseau?.raison === 'nom-reserve' ? 'Pseudo réservé' : 'Refusé') : 'Hors ligne'}
                       </span>
                     )}
                     <span className={`${pill} num gap-1.5 font-medium`} data-testid="argent" title="Argent d’Honorable"><Icon name="wallet" className="h-4 w-4 text-[#35e07a]" />{money(hud.money)}</span>
