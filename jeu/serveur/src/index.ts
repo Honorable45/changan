@@ -24,7 +24,7 @@ const MAX_JOUEURS = nombre('MAX_JOUEURS', 2000);
 const CAPACITE_SALLE = nombre('CAPACITE_SALLE', 60);
 const PAR_IP = nombre('CONNEXIONS_PAR_IP', 8);
 /** Origines autorisées, séparées par des virgules ; vide : toutes (développement). */
-const ORIGINES = (process.env.ORIGINES ?? '').split(',').map((o) => o.trim()).filter(Boolean).map((o) => (o.includes('://') ? o : `https://${o}`));
+const ORIGINES = (process.env.ORIGINES ?? '').split(',').map((o) => o.trim()).filter(Boolean).map((o) => (o.includes('://') ? o : `https://${o.includes('.') ? o : `${o}.onrender.com`}`)); // nom court Render → adresse publique
 /** Origine autorisée ? Une entrée sans « https:// » (un nom d'hôte, comme Render le fournit) vaut https://nom. */
 const origineOk = (o: string) => !ORIGINES.length || ORIGINES.includes(o);
 /** Nombre de mandataires de confiance devant le serveur (Caddy : 1), pour lire la vraie adresse du joueur. */
@@ -170,6 +170,12 @@ const http = createServer((req, res) => {
       savoirModifie = true;
       res.writeHead(204).end();
     });
+    return;
+  }
+  if (url === '/') {
+    // Page d'accueil : quelqu'un qui ouvre l'adresse du serveur voit qu'il fonctionne, plutôt qu'une erreur vide.
+    res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
+    res.end(`Serveur du jeu Lomé : en marche (${joueurs.size} joueur${joueurs.size > 1 ? 's' : ''} en ligne).\nCe n'est pas le jeu : ouvrez l'adresse du site du jeu (service lome-jeu).\n`);
     return;
   }
   if (url === '/sante') {

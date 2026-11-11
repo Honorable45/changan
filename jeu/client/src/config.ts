@@ -13,7 +13,8 @@ const env = import.meta.env as Record<string, string | undefined>;
 function defaultServer(): string | null {
   if (env.VITE_SERVEUR_URL === 'off') return null;
   if (env.VITE_SERVEUR_URL) return env.VITE_SERVEUR_URL;
-  if (env.VITE_SERVEUR_HOST) return `wss://${env.VITE_SERVEUR_HOST}/ws`;
+  // Render donne parfois le nom court du service (« lome-jeu-serveur ») : on complète en adresse publique.
+  if (env.VITE_SERVEUR_HOST) { const h = String(env.VITE_SERVEUR_HOST); return `wss://${h.includes('.') ? h : `${h}.onrender.com`}/ws`; }
   if (!ici) return null;
   // Même domaine, chemin /ws (Caddy) ; en local, le port 3005.
   return ici.port === '3004' ? `ws://${ici.hostname}:3005/ws` : `${ici.protocol === 'https:' ? 'wss' : 'ws'}://${ici.host}/ws`;
