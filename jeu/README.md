@@ -7,7 +7,8 @@ Le jeu en 3D de CHANGAN Togo, à part du site : la Nevo Q05 et d'autres véhicul
 - `partage/` : le protocole réseau commun.
 - `tests/` : les tests.
 
-Architecture, montée en charge, sécurité et limites : [ARCHITECTURE.md](ARCHITECTURE.md).
+Comprendre le code (langages, rôle de chaque dossier, API, interface, SMART AI en détail) : [GUIDE-DU-CODE.md](GUIDE-DU-CODE.md).
+Architecture, montée en charge, sécurité et limites : [ARCHITECTURE.md](ARCHITECTURE.md). Mise en ligne : [DEPLOIEMENT.md](DEPLOIEMENT.md).
 
 ```bash
 pnpm jeu:build && pnpm jeu:start   # puis http://localhost:3004

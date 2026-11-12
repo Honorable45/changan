@@ -173,27 +173,31 @@ Tout passe par la connexion WebSocket du jeu, dans la salle du joueur (60 joueur
 | --- | --- | --- |
 | **Où sont les autres** | `Communication.tsx` : liste des joueurs (distance, direction, « dans un bâtiment »), bouton « Y aller » qui trace l'itinéraire ; `engine.ts` : points de couleur et pseudos sur la mini-carte, flèche au bord pour ceux hors du cadre | message `carte` toutes les 2 s : `[id, pseudo, x, z, dedans]` de toute la salle, au mètre ; dans un bâtiment, la dernière position dehors |
 | **Discussion écrite** | touche Y ou bouton bulle ; les derniers messages s'affichent 8 s même discussion fermée ; compteur de non-lus | message `chat` nettoyé (`nettoieMessage`, 200 caractères), un toutes les 0,8 s par joueur, diffusé à la salle ; les 30 derniers envoyés à l'arrivant (`historique`), en mémoire seulement |
-| **Messages vocaux** (talkie-walkie) | `voix.ts` : maintenir le bouton micro ou V, relâcher pour envoyer (15 s au plus, Opus 16 kbit/s, environ 2 Ko par seconde) ; lecture automatique l'un après l'autre, bouton pour couper les voix, ▶ pour réécouter | binaire `[3][format][audio]` relayé aux autres joueurs de la salle avec l'id de l'auteur, jamais enregistré ; budget de 120 Ko, rechargé de 2 Ko/s (une minute de parole sur trois) |
-| **Ignorer quelqu'un** | depuis la liste : ses messages écrits et vocaux sont filtrés chez soi | — |
+| **Voix en direct, de proximité** | `voix.ts` : tenir « Parler » ou V ; le micro part par trames de 100 ms (μ-law 8 kHz, 8 Ko/s) ; chez l'auditeur, volume selon la distance et son venant du côté du parleur ; bouton pour ne plus entendre les autres | trame binaire `[3][n°][audio]` relayée **seulement aux joueurs à moins de 5 m** (distance mesurée par le serveur, dehors ou dans le même intérieur) ; rien n'est enregistré ; 30 s de parole d'affilée au plus, puis la moitié du temps ; plafond de voix pour tout le serveur |
+| **Ignorer, signaler** | depuis la liste : « Ignorer » filtre chez soi ses messages et sa voix ; « Signaler » l'ignore aussi et prévient le serveur | 2 signalements et 20 % de la salle : sourdine de 10 min (écrit et voix) ; pseudos uniques par salle (« Kofi 2 »), pseudos réservés refusés (Honorable, CHANGAN…) ; grossièretés masquées |
 
 **Limites :**
-- La voix n'est pas un appel en direct : chaque message part au relâchement du bouton, comme une note vocale. Un appel en continu demanderait WebRTC et un serveur relais (TURN), payant.
+- Qualité téléphone (8 kHz) et environ 0,3 s de retard : c'est le prix d'un format lisible partout sans bibliothèque, relayé par le serveur (pas de connexion directe entre joueurs, donc pas de serveur TURN payant).
 - Le micro n'est autorisé par les navigateurs que sur une page https (ou `localhost`) : en ligne sur Render, oui ; sur le réseau local en `http://192.168…`, non.
-- Pas de modération automatique : « Ignorer » et la limite de débit sont les seules protections. Avant une ouverture au grand public, prévoir un signalement et un filtre.
+- Modération légère : signalement collectif, filtre de grossièretés court, « Ignorer ». Pas de modérateur humain ni d'historique conservé.
 
 ## Sécurité du serveur
 
 - **Validation des messages :**
-  - taille maximale de 2 Ko par message, 64 Ko pour un message vocal ;
+  - taille maximale de 2 Ko par message (une trame de voix en fait 802) ;
   - format binaire contrôlé ;
   - positions dans les limites du monde, nombres finis ;
   - pseudo nettoyé, de 2 à 20 caractères ;
   - apparence limitée à des couleurs.
 - **Débit :** 30 messages par seconde en moyenne et par joueur, avec des rafales de 60 tolérées. Au-delà, les messages sont ignorés, et la connexion est fermée en cas d'abus prolongé.
 - **Connexions :**
-  - 8 au plus par adresse IP (`CONNEXIONS_PAR_IP`) ;
+  - adresse du joueur : `IP_ENTETE` (sur Render, `cf-connecting-ip`, posé par Cloudflare) ou `TRUST_PROXY` (Caddy : 1) ; un `X-Forwarded-For` écrit par le client n'est jamais lu ;
+  - 30 connexions au plus par adresse (`CONNEXIONS_PAR_IP`, beaucoup de mobiles partagent une adresse) et 30 nouvelles par minute (`ARRIVEES_PAR_MINUTE`) ;
   - présentation obligatoire dans les 5 secondes ;
   - battement toutes les 15 secondes, une connexion muette pendant 30 secondes est coupée.
+- **Savoir partagé (`/savoir`) :** démonstration acceptée seulement près d'un point critique connu ; un vote par adresse et par démonstration ; quotas par adresse et par heure (20 démonstrations, 30 points critiques, 120 votes) ; points simplifiés à 1 m, 200 démonstrations au plus, réponse compressée.
+- **Métriques (`/metriques`) :** jeton `METRIQUES_JETON` (en-tête `Authorization: Bearer …`) ou appel local ; sinon 404. Diagnostic d'adresse `/qui` seulement avec `DIAGNOSTIC_IP=1`.
+- **En-têtes du jeu :** une seule définition, `client/securite.mjs`, recopiée dans `render.yaml` et `deploy/Caddyfile` (test « en-têtes de sécurité ») : CSP stricte, pas d'affichage dans un cadre, micro pour ce site seul.
 - **Origine :** en production, seules les pages du domaine du jeu peuvent se connecter (`ORIGINES`).
 - **Joueur lent :** un joueur dont le tampon d'envoi déborde ne reçoit plus d'instantanés. Il est déconnecté au-delà de 2 Mo en attente.
 - **Vie privée :** le visage d'Honorable n'est jamais transmis. Les autres joueurs voient un pseudo et une tenue d'étudiant de l'IAI.

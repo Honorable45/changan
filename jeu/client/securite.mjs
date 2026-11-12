@@ -17,10 +17,10 @@ export function securite({ connect }) {
     "style-src 'self' 'unsafe-inline'",
     // Textures des modèles 3D (blob:) et dessins sur canvas (data:).
     "img-src 'self' data: blob:",
-    // Messages vocaux reçus, lus depuis la mémoire du navigateur.
-    "media-src 'self' blob:",
+    "media-src 'self'",
     "font-src 'self'",
-    `connect-src ${connect}`,
+    // blob: et data: : le chargeur de modèles 3D lit leurs textures intégrées avec fetch().
+    `connect-src ${connect} blob: data:`,
     "worker-src 'self' blob:",
     "object-src 'none'",
     "base-uri 'self'",

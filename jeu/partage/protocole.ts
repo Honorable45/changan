@@ -24,13 +24,17 @@ export type Genre = (typeof GENRES)[number];
 
 export const TYPE_ETAT = 1;
 export const TYPE_INSTANTANE = 2;
-/** Message vocal (talkie-walkie) : client → serveur [3][format][audio], serveur → client [3][id u16][format][audio]. */
+/*
+ * Voix en direct, de proximité : tant que le bouton « Parler » est tenu, le micro est envoyé par trames de 100 ms,
+ * et le serveur ne les relaie qu'aux joueurs à moins de VOIX_RAYON mètres. Rien n'est enregistré.
+ * Client → serveur [3][n° de trame][audio] ; serveur → client [3][id u16][n° de trame][audio].
+ * Audio : μ-law (G.711), 8 kHz, un octet par échantillon : 800 octets pour 100 ms, décodable partout sans bibliothèque.
+ */
 export const TYPE_VOIX = 3;
-/** Formats audio des messages vocaux, selon ce que le navigateur sait enregistrer. L'ordre ne change jamais. */
-export const FORMATS_VOIX = ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/mp4'] as const;
-/** Un message vocal dure au plus VOIX_DUREE_MAX secondes et pèse au plus VOIX_MAX_OCTETS (Opus à 16 kbit/s : 30 Ko pour 15 s). */
-export const VOIX_DUREE_MAX = 15;
-export const VOIX_MAX_OCTETS = 64000;
+export const VOIX_RAYON = 5;
+export const VOIX_FREQUENCE = 8000;
+export const VOIX_ECHANTILLONS_TRAME = 800;
+export const VOIX_TRAME_MAX = 1600;
 /** Longueur maximale d'un message écrit. */
 export const CHAT_MAX = 200;
 
@@ -156,25 +160,43 @@ export function nettoieMessage(v: unknown): string | null {
   return s.length ? s : null;
 }
 
-/** Message vocal d'un client : encodage, puis lecture par le serveur (null s'il est mal formé ou trop lourd). */
-export function encodeVoix(format: number, audio: Uint8Array): Uint8Array {
+export function encodeTrameVoix(seq: number, audio: Uint8Array): Uint8Array {
   const out = new Uint8Array(2 + audio.byteLength);
-  out[0] = TYPE_VOIX; out[1] = format; out.set(audio, 2);
+  out[0] = TYPE_VOIX; out[1] = seq & 0xff; out.set(audio, 2);
   return out;
 }
-export function decodeVoixClient(b: Uint8Array): { format: number; audio: Uint8Array } | null {
-  if (b.byteLength < 3 || b[0] !== TYPE_VOIX || b[1]! >= FORMATS_VOIX.length || b.byteLength - 2 > VOIX_MAX_OCTETS) return null;
-  return { format: b[1]!, audio: b.subarray(2) };
+/** Trame de voix envoyée par un client ; null si elle est mal formée ou trop longue. */
+export function decodeTrameVoixClient(b: Uint8Array): { seq: number; audio: Uint8Array } | null {
+  if (b.byteLength < 3 || b[0] !== TYPE_VOIX || b.byteLength - 2 > VOIX_TRAME_MAX) return null;
+  return { seq: b[1]!, audio: b.subarray(2) };
 }
-/** Relais d'un message vocal par le serveur, avec l'auteur. */
-export function encodeVoixRelais(id: number, format: number, audio: Uint8Array): Uint8Array {
+/** Relais d'une trame par le serveur, avec l'auteur. */
+export function encodeTrameVoixRelais(id: number, seq: number, audio: Uint8Array): Uint8Array {
   const out = new Uint8Array(4 + audio.byteLength);
-  out[0] = TYPE_VOIX; out[1] = id & 0xff; out[2] = id >> 8; out[3] = format; out.set(audio, 4);
+  out[0] = TYPE_VOIX; out[1] = id & 0xff; out[2] = id >> 8; out[3] = seq & 0xff; out.set(audio, 4);
   return out;
 }
-export function decodeVoixRelais(b: Uint8Array): { id: number; format: number; audio: Uint8Array } | null {
-  if (b.byteLength < 5 || b[0] !== TYPE_VOIX || b[3]! >= FORMATS_VOIX.length) return null;
-  return { id: b[1]! | (b[2]! << 8), format: b[3]!, audio: b.subarray(4) };
+export function decodeTrameVoixRelais(b: Uint8Array): { id: number; seq: number; audio: Uint8Array } | null {
+  if (b.byteLength < 5 || b[0] !== TYPE_VOIX) return null;
+  return { id: b[1]! | (b[2]! << 8), seq: b[3]!, audio: b.subarray(4) };
+}
+
+/** μ-law (G.711) : un échantillon entre −1 et 1 vers un octet, et retour. */
+export function versMuLaw(x: number): number {
+  let v = Math.max(-32635, Math.min(32635, Math.round(x * 32767)));
+  const signe = v < 0 ? 0x80 : 0;
+  if (signe) v = -v;
+  v += 0x84;
+  let exposant = 7;
+  for (let masque = 0x4000; (v & masque) === 0 && exposant > 0; masque >>= 1) exposant--;
+  const mantisse = (v >> (exposant + 3)) & 0x0f;
+  return ~(signe | (exposant << 4) | mantisse) & 0xff;
+}
+export function depuisMuLaw(octet: number): number {
+  const u = ~octet & 0xff;
+  const exposant = (u >> 4) & 0x07, mantisse = u & 0x0f;
+  const v = (((mantisse << 3) + 0x84) << exposant) - 0x84;
+  return (u & 0x80 ? -v : v) / 32768;
 }
 
 /** Position d'un joueur de la salle sur la carte : id, pseudo, x, z (au mètre), 1 s'il est dans un bâtiment. */

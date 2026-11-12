@@ -1,5 +1,5 @@
 import {
-  FORMATS_VOIX, FREQUENCE, GENRES, RETARD_INTERPOLATION, TYPE_VOIX, VERSION, decodeInstantane, decodeVoixRelais, encodeEtat, encodeVoix,
+  FREQUENCE, GENRES, RETARD_INTERPOLATION, TYPE_VOIX, VERSION, decodeInstantane, decodeTrameVoixRelais, encodeEtat, encodeTrameVoix,
   nettoieMessage, type Apparence, type DuServeur, type Etat, type EtatJoueur, type Genre, type PointCarte,
 } from '../../partage/protocole.ts';
 
@@ -12,8 +12,8 @@ export type EtatReseau = 'hors-ligne' | 'connexion' | 'en-ligne' | 'refus';
 type Echantillon = { t: number; e: EtatJoueur };
 /** Un joueur de la salle sur la carte. */
 export type JoueurCarte = { id: number; nom: string; x: number; z: number; dedans: boolean };
-/** Un message de la discussion : écrit, ou vocal (avec son enregistrement, lisible tant que la partie dure). */
-export type MessageJeu = { cle: number; id: number; nom: string; at: number; moi: boolean; txt?: string; voix?: { url: string; duree: number } };
+/** Un message écrit de la discussion. */
+export type MessageJeu = { cle: number; id: number; nom: string; at: number; moi: boolean; txt: string };
 let cleMessage = 0;
 /** Couleur d'un joueur, la même sur la carte, dans la liste et dans la discussion. */
 const COULEURS_JOUEURS = ['#4fc3ff', '#ffb547', '#c38bff', '#ff7aa8', '#7be08a', '#ffe066', '#5ee0d0', '#ff8f5a'];
@@ -32,13 +32,15 @@ export function creerReseau(url: string, nom: string, apparence: Apparence) {
   let monId = -1, carte: JoueurCarte[] = [];
   let messages: MessageJeu[] = [];
   const ecouteurs = new Set<(m: MessageJeu) => void>();
+  const ecouteursVoix = new Set<(id: number, audio: Uint8Array) => void>();
+  let trame = 0;
   let tropVite = 0, muetJusqua = 0, raison: string | null = null;
   const nomDe = (id: number) => fiches.get(id)?.nom ?? carte.find((c) => c.id === id)?.nom ?? 'Joueur';
   const ajouter = (m: Omit<MessageJeu, 'cle'>) => {
     const full = { ...m, cle: ++cleMessage };
     messages.push(full);
     // Les 100 derniers messages ; les enregistrements vocaux oubliés sont libérés.
-    while (messages.length > 100) { const old = messages.shift()!; if (old.voix) URL.revokeObjectURL(old.voix.url); }
+    while (messages.length > 100) messages.shift();
     for (const f of ecouteurs) f(full);
   };
 
@@ -51,10 +53,9 @@ export function creerReseau(url: string, nom: string, apparence: Apparence) {
       if (typeof ev.data !== 'string') {
         const octets = new Uint8Array(ev.data as ArrayBuffer);
         if (octets[0] === TYPE_VOIX) {
-          const v = decodeVoixRelais(octets);
-          if (!v) return;
-          const blob = new Blob([v.audio.slice()], { type: FORMATS_VOIX[v.format] });
-          ajouter({ id: v.id, nom: nomDe(v.id), at: Date.now(), moi: false, voix: { url: URL.createObjectURL(blob), duree: 0 } });
+          // Voix en direct d'un joueur à moins de 5 m : transmise telle quelle aux haut-parleurs.
+          const v = decodeTrameVoixRelais(octets);
+          if (v) for (const f of ecouteursVoix) f(v.id, v.audio);
           return;
         }
         const snap = decodeInstantane(new DataView(ev.data as ArrayBuffer));
@@ -155,14 +156,15 @@ export function creerReseau(url: string, nom: string, apparence: Apparence) {
       ws.send(JSON.stringify({ t: 'chat', txt: propre }));
       return true;
     },
-    /** Message vocal à toute la salle ; il s'ajoute tout de suite à sa propre discussion. */
-    parler(format: number, audio: Uint8Array, duree: number, url: string) {
-      if (!ws || ws.readyState !== WebSocket.OPEN || statut !== 'en-ligne') return false;
-      ws.send(encodeVoix(format, audio));
-      ajouter({ id: monId, nom, at: Date.now(), moi: true, voix: { url, duree } });
+    /** Trame de voix en direct (100 ms) : le serveur la relaie aux joueurs à moins de 5 m. */
+    parler(audio: Uint8Array) {
+      if (!ws || ws.readyState !== WebSocket.OPEN || statut !== 'en-ligne' || ws.bufferedAmount > 64_000) return false;
+      ws.send(encodeTrameVoix(trame++ & 0xff, audio));
       return true;
     },
-    fermer() { for (const m of messages) if (m.voix) URL.revokeObjectURL(m.voix.url); fermeVolontaire = true; if (relance) clearTimeout(relance); ws?.close(); },
+    /** Prévenu à chaque trame de voix reçue ; renvoie de quoi se désabonner. */
+    ecouterVoix(f: (id: number, audio: Uint8Array) => void) { ecouteursVoix.add(f); return () => { ecouteursVoix.delete(f); }; },
+    fermer() { fermeVolontaire = true; if (relance) clearTimeout(relance); ws?.close(); },
   };
 }
 export type Reseau = ReturnType<typeof creerReseau>;

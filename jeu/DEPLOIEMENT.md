@@ -57,6 +57,8 @@ Le jeu compilé est un simple dossier de fichiers :
 2. Écrivez l'adresse du serveur dans `jeu/client/dist/config.json`.
 3. Déposez le dossier `jeu/client/dist` sur https://app.netlify.com/drop (glisser-déposer) ou sur Cloudflare Pages.
 
+Le visage d'Honorable n'est jamais dans `dist` : la compilation le retire (vérifié par un test). Les en-têtes de sécurité, eux, ne sont pas dans `dist` : sur Netlify ou Cloudflare Pages, recopiez ceux de `render.yaml` dans leur fichier `_headers`.
+
 Le serveur reste sur Render.
 
 ## Limites des offres gratuites
@@ -64,7 +66,8 @@ Le serveur reste sur Render.
 - **Mise en veille du serveur :** il s'endort après 15 minutes sans joueur. La première connexion qui suit le réveille, en 30 à 60 secondes : le jeu affiche « Connexion… », puis le mode en ligne arrive tout seul. Le jeu reste jouable seul pendant ce temps.
 - **Savoir de SMART AI non conservé :** sur l'offre gratuite, ce qui a été appris des joueurs est perdu à chaque redémarrage ou redéploiement du serveur, faute de disque permanent. Chaque navigateur garde toutefois son propre savoir, qui est renvoyé au serveur à la prochaine partie. Pour un savoir permanent, il faut un disque payant Render (`SAVOIR_FICHIER=/data/savoir.json`) ou un VPS (voir `docs/deploiement.md`).
 - **Capacité :** une instance gratuite est petite. Elle convient pour une démonstration et quelques dizaines de joueurs simultanés. Pour des milliers de joueurs, voir `jeu/ARCHITECTURE.md` et un serveur payant.
-- **Visage d'Honorable :** absent du dépôt public, donc absent en ligne. Honorable y garde le visage du modèle 3D.
+- **Visage d'Honorable :** absent du dépôt public et retiré de chaque compilation, donc jamais en ligne. Honorable y garde le visage du modèle 3D.
+- **Micro :** « Parler » ne fonctionne qu'en https, ce qui est le cas sur Render.
 
 ## Ce qui a été vérifié, et ce qui ne l'a pas été
 

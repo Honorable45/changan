@@ -12,7 +12,7 @@
 import { createServer, type IncomingMessage } from 'node:http';
 import { WebSocketServer, type WebSocket, type RawData } from 'ws';
 import {
-  DRAPEAU, FREQUENCE, RAYON_VOISINAGE, TYPE_VOIX, VERSION, VOISINS_MAX, VOIX_MAX_OCTETS, decodeEtat, decodeVoixClient, encodeInstantane, encodeVoixRelais,
+  DRAPEAU, FREQUENCE, RAYON_VOISINAGE, TYPE_VOIX, VERSION, VOISINS_MAX, VOIX_RAYON, decodeEtat, decodeTrameVoixClient, encodeInstantane, encodeTrameVoixRelais,
   filtreGrossier, nettoieMessage, nettoieNom, nomReserve, valideApparence, type Apparence, type DuServeur, type Etat, type EtatJoueur, type PointCarte,
 } from '../../partage/protocole.ts';
 import { readFileSync, renameSync, writeFileSync } from 'node:fs';
@@ -115,16 +115,18 @@ const savoirServi = () => {
 type Joueur = {
   id: number; ws: WebSocket; ip: string; nom: string | null; apparence: Apparence | null; etat: Etat | null;
   salle: Salle | null; vus: Set<number>; jetons: number; abus: number; vivant: boolean;
-  /** Messages écrits : un toutes les 0,8 s au plus. Voix : budget d'octets, rechargé de 1,2 Ko par seconde (environ 35 % du temps de parole). */
+  /** Messages écrits : un toutes les 0,8 s au plus. Voix : budget d'octets (30 s de parole d'affilée), rechargé de la moitié du débit de la voix. */
   dernierChat: number; budgetVoix: number;
   /** Modération : joueurs qui l'ont signalé (ids), et fin de sa mise en sourdine (ms). */
   signalePar: Set<number>; muetJusqua: number;
+  /** Dernier avertissement envoyé pour une trame de voix refusée (un toutes les 2 s au plus). */
+  avisVoix: number;
   /** Dernière position connue hors des bâtiments, pour la carte (dans un bâtiment, le joueur est loin, dans un intérieur). */
   dehors: { x: number; z: number } | null;
 };
 type Message = { id: number; nom: string; txt: string; at: number };
 type Salle = { nom: string; joueurs: Set<Joueur>; historique: Message[] };
-const BUDGET_VOIX = 90_000, RECHARGE_VOIX = 1200;
+const BUDGET_VOIX = 240_000, RECHARGE_VOIX = 4000;
 /** Signalements : sourdine de 10 minutes dès que 2 joueurs, et au moins 20 % des autres joueurs de la salle, l'ont signalé. */
 const SOURDINE_MS = 10 * 60_000;
 const seuilSignalement = (s: Salle) => Math.max(2, Math.ceil((s.joueurs.size - 1) * 0.2));
@@ -211,7 +213,9 @@ function recevoir(j: Joueur, data: RawData, binaire: boolean) {
   const cle = (n: string) => n.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
   const pris = new Set([...salle.joueurs].map((o) => cle(o.nom!)));
   let final = nom;
-  for (let k = 2; pris.has(cle(final)) && k < 100; k++) final = `${nom.slice(0, 20 - String(k).length - 1).trim()} ${k}`;
+  // Le numéro éventuel du pseudo demandé est remplacé, pas empilé : « Kofi 2 » déjà pris devient « Kofi 3 ».
+  const base = pris.has(cle(nom)) ? nom.replace(/\s*\d+$/, '') || nom : nom;
+  for (let k = 2; pris.has(cle(final)) && k < 100; k++) final = `${base.slice(0, 20 - String(k).length - 1).trim()} ${k}`;
   j.nom = final;
   salle.joueurs.add(j);
   j.salle = salle;
@@ -235,23 +239,36 @@ function discuter(j: Joueur, txt: unknown) {
   for (const o of s.joueurs) if (o.ws.readyState === o.ws.OPEN && o.ws.bufferedAmount < 512_000) o.ws.send(texte);
 }
 
-/** Message vocal : relayé tel quel aux autres joueurs de la salle, jamais enregistré. Le budget limite la parole à une minute sur trois. */
+/**
+ * Voix en direct : chaque trame (100 ms) n'est relayée qu'aux joueurs de la salle à moins de VOIX_RAYON mètres du parleur,
+ * tous deux dehors ou tous deux dans le même intérieur. C'est le serveur qui mesure la distance : un client modifié
+ * ne peut pas écouter de loin. Rien n'est enregistré.
+ */
 function relayerVoix(j: Joueur, buf: Buffer) {
-  const s = j.salle;
-  const v = decodeVoixClient(new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength));
-  if (!s || !v) return;
+  const s = j.salle, e = j.etat;
+  const v = decodeTrameVoixClient(new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength));
+  if (!s || !v || !e) return;
   const now = Date.now();
-  if (now < j.muetJusqua) { envoyer(j, { t: 'muet', secondes: Math.ceil((j.muetJusqua - now) / 1000) }); return; }
-  if (v.audio.byteLength > j.budgetVoix) { envoyer(j, { t: 'trop-vite' }); return; }
+  const avertir = (m: DuServeur) => { if (now - j.avisVoix > 2000) { j.avisVoix = now; envoyer(j, m); } };
+  if (now < j.muetJusqua) { avertir({ t: 'muet', secondes: Math.ceil((j.muetJusqua - now) / 1000) }); return; }
+  if (v.audio.byteLength > j.budgetVoix) { avertir({ t: 'trop-vite' }); return; }
+  const dedans = e.drapeaux & DRAPEAU.dedans;
+  const auditeurs: Joueur[] = [];
+  for (const o of s.joueurs) {
+    const f = o.etat;
+    if (o === j || !f || (f.drapeaux & DRAPEAU.dedans) !== dedans) continue;
+    if (Math.hypot(f.x - e.x, f.z - e.z, f.y - e.y) <= VOIX_RAYON) auditeurs.push(o);
+  }
+  j.budgetVoix -= v.audio.byteLength;
+  if (!auditeurs.length) return;
   // Plafond pour tout le serveur : la voix ne peut pas épuiser la bande passante, même avec beaucoup de robots.
   if (now - voixFenetre.debut > 1000) voixFenetre = { debut: now, octets: 0 };
-  const cout = (v.audio.byteLength + 4) * (s.joueurs.size - 1);
-  if (voixFenetre.octets + cout > VOIX_MAX_SORTANT) { envoyer(j, { t: 'trop-vite' }); return; }
+  const relais = encodeTrameVoixRelais(j.id, v.seq, v.audio);
+  const cout = relais.byteLength * auditeurs.length;
+  if (voixFenetre.octets + cout > VOIX_MAX_SORTANT) return;
   voixFenetre.octets += cout;
-  j.budgetVoix -= v.audio.byteLength;
-  const relais = encodeVoixRelais(j.id, v.format, v.audio);
-  stats.octetsVoix += relais.byteLength * (s.joueurs.size - 1);
-  for (const o of s.joueurs) if (o !== j && o.ws.readyState === o.ws.OPEN && o.ws.bufferedAmount < 512_000) o.ws.send(relais);
+  stats.octetsVoix += cout;
+  for (const o of auditeurs) if (o.ws.readyState === o.ws.OPEN && o.ws.bufferedAmount < 256_000) o.ws.send(relais);
 }
 
 /**
@@ -365,8 +382,8 @@ const http = createServer((req, res) => {
   res.writeHead(404).end();
 });
 
-// Les messages vocaux sont les seuls gros messages ; le reste est vérifié à 2 Ko dans recevoir().
-const wss = new WebSocketServer({ noServer: true, maxPayload: VOIX_MAX_OCTETS + 16, perMessageDeflate: false, clientTracking: false });
+// Aucun message ne dépasse 2 Ko (une trame de voix en fait 802) : au-delà, la connexion est coupée.
+const wss = new WebSocketServer({ noServer: true, maxPayload: 2048, perMessageDeflate: false, clientTracking: false });
 let arret = false;
 
 http.on('upgrade', (req, socket, head) => {
@@ -385,7 +402,7 @@ http.on('upgrade', (req, socket, head) => {
   const id = nouvelId();
   if (id < 0) return refuser(503);
   wss.handleUpgrade(req, socket, head, (ws) => {
-    const j: Joueur = { id, ws, ip, nom: null, apparence: null, etat: null, salle: null, vus: new Set(), jetons: 60, abus: 0, vivant: true, dernierChat: 0, budgetVoix: BUDGET_VOIX, dehors: null, signalePar: new Set(), muetJusqua: 0 };
+    const j: Joueur = { id, ws, ip, nom: null, apparence: null, etat: null, salle: null, vus: new Set(), jetons: 60, abus: 0, vivant: true, dernierChat: 0, budgetVoix: BUDGET_VOIX, dehors: null, signalePar: new Set(), muetJusqua: 0, avisVoix: 0 };
     joueurs.add(j);
     parIp.set(ip, (parIp.get(ip) ?? 0) + 1);
     ws.binaryType = 'nodebuffer';

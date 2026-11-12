@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Hud } from './moteur/engine';
 import { couleurJoueur, type MessageJeu, type Reseau } from './reseau';
-import { creerLecteur, enregistrer, voixPossible, type Enregistrement } from './voix';
-import { CHAT_MAX, VOIX_DUREE_MAX } from '../../partage/protocole.ts';
+import { contexteVoix, creerHautParleurs, ouvrirMicro, voixPossible, type Micro } from './voix';
+import { CHAT_MAX, VOIX_RAYON } from '../../partage/protocole.ts';
 
 /**
  * Communication entre joueurs, en ligne : où sont les autres (liste, distance, direction, itinéraire jusqu'à eux),
- * discussion écrite à toute la ville, et messages vocaux façon talkie-walkie (maintenir pour parler).
- * Chaque joueur peut ignorer quelqu'un : ses messages écrits et vocaux ne lui parviennent plus.
+ * discussion écrite à toute la ville, et voix en direct de proximité : on tient « Parler », les joueurs à moins de 5 m
+ * entendent aussitôt, plus fort de près et du bon côté.
+ * Chaque joueur peut ignorer ou signaler quelqu'un : ses messages et sa voix ne lui parviennent plus.
  */
 type Joueurs = NonNullable<Hud['online']>['joueurs'];
 type Props = {
@@ -27,7 +28,6 @@ const PICTOS = {
   hautParleur: <><path d="M4 9h4l5-4v14l-5-4H4z" /><path d="M16.5 9a4 4 0 0 1 0 6" /></>,
   muet: <><path d="M4 9h4l5-4v14l-5-4H4z" /><path d="m17 9 5 6M22 9l-5 6" /></>,
   envoyer: <path d="M4 12 20 4l-6 16-3-7z" />,
-  lecture: <path d="M8 5v14l11-7z" />,
 } as const;
 const Picto = ({ n, className = 'h-5 w-5' }: { n: keyof typeof PICTOS; className?: string }) => (
   <svg aria-hidden="true" viewBox="0 0 24 24" className={`${className} fill-none stroke-current`} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{PICTOS[n]}</svg>
@@ -35,6 +35,8 @@ const Picto = ({ n, className = 'h-5 w-5' }: { n: keyof typeof PICTOS; className
 const cleJoueur = (id: number, nom: string) => `${id}:${nom}`;
 const distanceTexte = (m: number) => (m >= 1000 ? `${(m / 1000).toFixed(1).replace('.', ',')} km` : `${m} m`);
 const heure = (t: number) => new Date(t).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+/** Le micro reste ouvert 30 s après le dernier « Parler » : rouvert à chaque appui, il couperait les premiers mots. */
+const GARDE_MICRO_MS = 30_000;
 
 export function Communication({ reseau, joueurs, enLigne, onNotice, onNavigate, onTyping }: Props) {
   const [panneau, setPanneau] = useState<'discussion' | 'joueurs' | null>(null);
@@ -44,23 +46,24 @@ export function Communication({ reseau, joueurs, enLigne, onNotice, onNavigate, 
   // Ignorés par numéro ET pseudo : un numéro libéré puis repris par un autre joueur n'hérite pas de la mise à l'écart.
   const [ignores, setIgnores] = useState<Set<string>>(() => new Set());
   const [signales, setSignales] = useState<Set<string>>(() => new Set());
-  const [parle, setParle] = useState<string | null>(null);
   const [voixMuette, setVoixMuette] = useState(false);
-  const [enreg, setEnreg] = useState<number | null>(null);
+  const [parleMoi, setParleMoi] = useState(false);
   const [recents, setRecents] = useState<MessageJeu[]>([]);
-  const lecteur = useRef<ReturnType<typeof creerLecteur> | null>(null);
+  const hautParleurs = useRef<ReturnType<typeof creerHautParleurs> | null>(null);
   const ignoresRef = useRef(ignores);
   ignoresRef.current = ignores;
+  const joueursRef = useRef(joueurs);
+  joueursRef.current = joueurs;
   const panneauRef = useRef(panneau);
   panneauRef.current = panneau;
   const saisie = useRef<HTMLInputElement>(null);
   const fin = useRef<HTMLLIElement>(null);
-  const micro = useRef<{ arreter: () => Promise<Enregistrement | null | undefined> } | null>(null);
-  const relache = useRef(false);
+  const micro = useRef<Micro | null>(null);
+  const ouverture = useRef<Promise<Micro | null> | null>(null);
+  const tenu = useRef(false);
+  const garde = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    const l = creerLecteur(setParle);
-    lecteur.current = l;
     const stop = reseau.ecouter((m) => {
       if (ignoresRef.current.has(cleJoueur(m.id, m.nom)) && !m.moi) return;
       setMessages([...reseau.messages]);
@@ -70,45 +73,60 @@ export function Communication({ reseau, joueurs, enLigne, onNotice, onNavigate, 
         setRecents((r) => [...r.slice(-2), m]);
         setTimeout(() => setRecents((r) => r.filter((x) => x.cle !== m.cle)), 8000);
       }
-      if (m.voix && !m.moi) l.jouer(m.voix.url, m.nom);
     });
-    return () => { stop(); l.fermer(); };
+    // Voix en direct : plus forte de près, venant du côté du joueur qui parle.
+    const hp = creerHautParleurs();
+    hautParleurs.current = hp;
+    const stopVoix = reseau.ecouterVoix((id, audio) => {
+      const j = joueursRef.current.find((x) => x.id === id);
+      if (j && ignoresRef.current.has(cleJoueur(j.id, j.nom))) return;
+      const d = j ? j.distance : 0;
+      hp.jouer(id, audio, 1 - 0.65 * Math.min(1, d / VOIX_RAYON), j && d > 0.5 ? -Math.sin(j.cap) * 0.8 : 0);
+    });
+    // Les navigateurs ne laissent sortir le son qu'après un geste du joueur.
+    const debloquer = () => { if (voixPossible()) contexteVoix(); };
+    window.addEventListener('pointerdown', debloquer);
+    window.addEventListener('keydown', debloquer);
+    return () => {
+      stop(); stopVoix(); hp.fermer();
+      window.removeEventListener('pointerdown', debloquer); window.removeEventListener('keydown', debloquer);
+      if (garde.current) clearTimeout(garde.current);
+      micro.current?.fermer(); micro.current = null;
+    };
   }, [reseau]);
 
   useEffect(() => { if (panneau === 'discussion') { setNonLus(0); fin.current?.scrollIntoView({ block: 'end' }); } }, [panneau, messages.length]);
 
   const ouvrirDiscussion = useCallback(() => { setPanneau('discussion'); requestAnimationFrame(() => saisie.current?.focus()); }, []);
 
-  /* Talkie-walkie : le micro s'ouvre à l'appui et le message part au relâchement (ou au bout de 15 s). */
-  const livrer = useCallback((e: Enregistrement | null | undefined) => {
-    if (e === undefined) return;
-    micro.current = null;
-    setEnreg(null);
-    if (!e) { onNotice('Message trop court : maintenez le bouton pendant que vous parlez.'); return; }
-    if (!reseau.parler(e.format, e.audio, e.duree, e.url)) onNotice('Message vocal non envoyé : connexion perdue.');
-    else setMessages([...reseau.messages]);
-  }, [onNotice, reseau]);
+  /* « Parler » : tant que le bouton (ou V) est tenu, le micro part en direct vers les joueurs à moins de 5 m. */
   const commencer = useCallback(async () => {
-    if (micro.current) return;
-    if (!enLigne) { onNotice('Messages vocaux : attendez d’être connecté au jeu en ligne.'); return; }
+    if (tenu.current) return;
+    if (!enLigne) { onNotice('Parler : attendez d’être connecté au jeu en ligne.'); return; }
     if (!voixPossible()) { onNotice('Micro indisponible ici : il faut une page sécurisée (https) et un navigateur récent.'); return; }
-    relache.current = false;
+    tenu.current = true;
+    setParleMoi(true);
+    if (garde.current) { clearTimeout(garde.current); garde.current = null; }
     try {
-      const r = await enregistrer(livrer);
-      micro.current = r;
-      setEnreg(performance.now());
-      // Bouton relâché pendant que le navigateur demandait l'autorisation : on arrête aussitôt.
-      if (relache.current) void r.arreter().then(livrer);
+      ouverture.current ??= ouvrirMicro((audio) => { reseau.parler(audio); });
+      const m = await ouverture.current;
+      micro.current = m;
+      if (m) m.emettre = tenu.current;
     } catch (err) {
-      micro.current = null;
+      ouverture.current = null;
+      tenu.current = false;
+      setParleMoi(false);
       const nom = (err as Error).name;
       onNotice(nom === 'NotAllowedError' ? 'Micro refusé : autorisez-le dans les réglages du navigateur pour parler aux autres.' : nom === 'NotFoundError' ? 'Aucun micro trouvé sur cet appareil.' : 'Le micro n’a pas pu s’ouvrir.');
     }
-  }, [enLigne, livrer, onNotice]);
+  }, [enLigne, onNotice, reseau]);
   const finir = useCallback(() => {
-    relache.current = true;
-    void micro.current?.arreter().then(livrer);
-  }, [livrer]);
+    if (!tenu.current) return;
+    tenu.current = false;
+    setParleMoi(false);
+    if (micro.current) micro.current.emettre = false;
+    garde.current = setTimeout(() => { micro.current?.fermer(); micro.current = null; ouverture.current = null; }, GARDE_MICRO_MS);
+  }, []);
 
   // Clavier : Y ouvre la discussion, V maintenu pour parler.
   useEffect(() => {
@@ -121,12 +139,13 @@ export function Communication({ reseau, joueurs, enLigne, onNotice, onNavigate, 
     const up = (e: KeyboardEvent) => { if (e.key.toLowerCase() === 'v' && !(e.target instanceof HTMLInputElement)) finir(); };
     window.addEventListener('keydown', down);
     window.addEventListener('keyup', up);
-    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); };
+    window.addEventListener('blur', finir);
+    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); window.removeEventListener('blur', finir); };
   }, [commencer, finir, ouvrirDiscussion]);
 
-  // Durée affichée pendant l'enregistrement.
-  const [, tic] = useState(0);
-  useEffect(() => { if (enreg === null) return; const t = setInterval(() => tic((n) => n + 1), 250); return () => clearInterval(t); }, [enreg]);
+  // Qui m'entend (joueurs à moins de 5 m) et qui parle en ce moment, rafraîchis avec le jeu.
+  const proches = joueurs.filter((j) => !j.dedans && j.distance <= VOIX_RAYON).length;
+  const parlent = (hautParleurs.current?.parlent() ?? []).map((id) => joueurs.find((j) => j.id === id)?.nom).filter((n): n is string => !!n);
 
   const envoyerTexte = () => {
     if (!texte.trim()) return;
@@ -161,7 +180,7 @@ export function Communication({ reseau, joueurs, enLigne, onNotice, onNavigate, 
           {recents.filter((m) => !ignores.has(cleJoueur(m.id, m.nom))).map((m) => (
             <li key={m.cle} className="glass rounded-2xl px-3 py-1.5 text-xs leading-snug">
               <span className="font-semibold" style={{ color: couleurJoueur(m.id) }}>{m.nom}</span>{' '}
-              {m.txt ?? <span className="text-white/75">message vocal</span>}
+              {m.txt}
             </li>
           ))}
         </ul>
@@ -188,7 +207,7 @@ export function Communication({ reseau, joueurs, enLigne, onNotice, onNavigate, 
                       {distanceTexte(j.distance)}{j.dedans && ' · dans un bâtiment'}
                     </span>
                   </span>
-                  <button type="button" onClick={() => { onNavigate(j.nom, j.x, j.z); setPanneau(null); }} className="min-h-9 shrink-0 rounded-full bg-white px-3 text-xs font-medium text-[#0b0c0e]">Y aller</button>
+                  <button type="button" onClick={() => { if (j.distance < 20 && !j.dedans) onNotice(`${j.nom} est juste à côté de vous (${j.distance} m).`); else onNavigate(j.nom, j.x, j.z); setPanneau(null); }} className="min-h-9 shrink-0 rounded-full bg-white px-3 text-xs font-medium text-[#0b0c0e]">Y aller</button>
                   <span className="flex shrink-0 flex-col items-end">
                     <button type="button" onClick={() => basculerIgnore(j.id, j.nom)} aria-pressed={ignores.has(cleJoueur(j.id, j.nom))} className="min-h-7 px-1 text-xs underline underline-offset-2">{ignores.has(cleJoueur(j.id, j.nom)) ? 'Écouter' : 'Ignorer'}</button>
                     {!signales.has(cleJoueur(j.id, j.nom)) && <button type="button" onClick={() => signaler(j.id, j.nom)} className="min-h-7 px-1 text-xs text-[#ff9a8f] underline underline-offset-2" data-testid="signaler">Signaler</button>}
@@ -199,16 +218,12 @@ export function Communication({ reseau, joueurs, enLigne, onNotice, onNavigate, 
           ) : (
             <>
               <ul className="mt-2 min-h-0 flex-1 space-y-1.5 overflow-y-auto" aria-live="polite">
-                {visibles.length === 0 && <li className="py-2 text-xs text-white/70">Aucun message. Écrivez à tous les joueurs de la ville, ou maintenez le micro pour parler.</li>}
+                {visibles.length === 0 && <li className="py-2 text-xs text-white/70">Aucun message. Écrivez à tous les joueurs de la ville, ou tenez « Parler » pour parler à ceux qui sont à moins de 5 m.</li>}
                 {visibles.map((m) => (
                   <li key={m.cle} className="text-xs leading-snug" data-testid="message">
                     <span className="font-semibold" style={{ color: m.moi ? '#fff' : couleurJoueur(m.id) }}>{m.moi ? 'Vous' : m.nom}</span>
                     <span className="num ml-1.5 text-white/40">{heure(m.at)}</span>
-                    {m.txt !== undefined ? <span className="block break-words text-white/90">{m.txt}</span> : m.voix && (
-                      <button type="button" onClick={() => lecteur.current?.rejouer(m.voix!.url, m.nom)} className="mt-0.5 flex min-h-8 items-center gap-1.5 rounded-full bg-white/10 px-2.5 text-white/90">
-                        <Picto n="lecture" className="h-3.5 w-3.5" />Message vocal{m.voix.duree ? ` · ${Math.max(1, Math.round(m.voix.duree))} s` : ''}
-                      </button>
-                    )}
+                    <span className="block break-words text-white/90">{m.txt}</span>
                   </li>
                 ))}
                 <li ref={fin} aria-hidden="true" />
@@ -238,23 +253,25 @@ export function Communication({ reseau, joueurs, enLigne, onNotice, onNavigate, 
           <Picto n="bulle" />
           {nonLus > 0 && <span className="num absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-[#ff5a4d] px-1 text-[.65rem] font-bold">{nonLus > 9 ? '9+' : nonLus}</span>}
         </button>
-        <button type="button" aria-label={enreg !== null ? 'Relâchez pour envoyer le message vocal' : 'Maintenir pour parler'} title="Maintenir pour parler (V)" data-testid="bouton-micro"
-          className={`relative flex h-14 w-14 [@media(max-height:480px)]:h-11 [@media(max-height:480px)]:w-11 select-none touch-none items-center justify-center rounded-full ${enreg !== null ? 'bg-[#ff5a4d] text-white shadow-[0_0_0_6px_rgb(255_90_77/.3)]' : 'glass'}`}
+        <button type="button" aria-label={parleMoi ? 'Vous parlez : relâchez pour vous taire' : 'Parler (maintenir) : les joueurs à moins de 5 m vous entendent'} aria-pressed={parleMoi} title="Parler : maintenir (V)" data-testid="bouton-parler"
+          className={`relative flex h-14 w-14 flex-col items-center justify-center rounded-full text-[.55rem] font-semibold [@media(max-height:480px)]:h-11 [@media(max-height:480px)]:w-11 select-none touch-none ${parleMoi ? 'bg-[#35e07a] text-[#06210f] shadow-[0_0_0_6px_rgb(53_224_122/.3)]' : 'glass'}`}
           onPointerDown={(e) => { e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); void commencer(); }}
           onPointerUp={finir} onPointerCancel={finir} onContextMenu={(e) => e.preventDefault()}>
-          <Picto n="micro" className="h-6 w-6" />
+          <Picto n="micro" className="h-5 w-5" /><span className="[@media(max-height:480px)]:hidden">Parler</span>
         </button>
-        <button type="button" className={bouton} aria-pressed={voixMuette} aria-label={voixMuette ? 'Réactiver les messages vocaux reçus' : 'Couper les messages vocaux reçus'} title="Voix des autres joueurs"
-          onClick={() => { const m = !voixMuette; setVoixMuette(m); lecteur.current?.setMuet(m); }}>
+        <button type="button" className={bouton} aria-pressed={voixMuette} aria-label={voixMuette ? 'Réentendre les autres joueurs' : 'Ne plus entendre les autres joueurs'} title="Voix des autres joueurs"
+          onClick={() => { const m = !voixMuette; setVoixMuette(m); hautParleurs.current?.setMuet(m); }}>
           <Picto n={voixMuette ? 'muet' : 'hautParleur'} />
         </button>
       </div>
 
-      {/* Qui parle, et l'enregistrement en cours */}
-      {(parle || enreg !== null) && (
+      {/* Qui m'entend quand je parle, et qui parle près de moi */}
+      {(parleMoi || parlent.length > 0) && (
         <p role="status" className="glass pointer-events-none absolute -top-12 right-0 [@media(max-height:480px)]:-bottom-10 [@media(max-height:480px)]:top-auto flex items-center gap-2 whitespace-nowrap rounded-full px-3 py-1.5 text-xs" data-testid="voix-etat">
-          <span aria-hidden="true" className={`h-2 w-2 animate-pulse rounded-full ${enreg !== null ? 'bg-[#ff5a4d]' : 'bg-[#35e07a]'}`} />
-          {enreg !== null ? `Enregistrement… ${Math.min(VOIX_DUREE_MAX, Math.floor((performance.now() - enreg) / 1000))} s / ${VOIX_DUREE_MAX} s · relâchez pour envoyer` : `${parle} parle`}
+          <span aria-hidden="true" className="h-2 w-2 animate-pulse rounded-full bg-[#35e07a]" />
+          {parleMoi
+            ? (proches ? `Vous parlez · ${proches} joueur${proches > 1 ? 's' : ''} à moins de 5 m vous entend${proches > 1 ? 'ent' : ''}` : 'Vous parlez · personne à moins de 5 m : approchez-vous')
+            : `${parlent.join(', ')} ${parlent.length > 1 ? 'parlent' : 'parle'}`}
         </p>
       )}
     </div>

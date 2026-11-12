@@ -20,3 +20,7 @@ jeu/client/public/game/humains/visage-honorable.png
 
 # Savoir appris des joueurs (données de jeu, propres à chaque serveur)
 jeu/serveur/savoir.json
+
+# Captures vidéo de tiers (droits non acquis) : jamais dans le dépôt public
+docs/*.webm
+docs/*.mp4

@@ -13,14 +13,12 @@ services:
       # Adresse réelle du joueur : Render passe par Cloudflare, qui pose toujours CF-Connecting-IP (un client ne peut pas l'imposer).
       - key: IP_ENTETE
         value: cf-connecting-ip
+      # Repli si l'en-tête manquait : X-Forwarded-For vaut « joueur, Cloudflare, Render » (vérifié), le joueur est 3e en partant de la droite.
       - key: TRUST_PROXY
-        value: "1"
+        value: "3"
       # Beaucoup de joueurs mobiles au Togo partagent une adresse (CGNAT) : 30 connexions par adresse, 30 nouvelles par minute.
       - key: CONNEXIONS_PAR_IP
         value: "30"
-      # Diagnostic temporaire (GET /qui) pour vérifier l'adresse lue ; à retirer une fois vérifié.
-      - key: DIAGNOSTIC_IP
-        value: "1"
       - key: MAX_JOUEURS
         value: "1500"
       - key: CAPACITE_SALLE
@@ -52,7 +50,7 @@ services:
       # En-têtes de sécurité : copie exacte de jeu/client/securite.mjs (vérifiée par le test « en-têtes de sécurité »).
       - path: /*
         name: Content-Security-Policy
-        value: "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self'; connect-src 'self' https://lome-jeu-serveur.onrender.com wss://lome-jeu-serveur.onrender.com; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+        value: "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self'; font-src 'self'; connect-src 'self' https://lome-jeu-serveur.onrender.com wss://lome-jeu-serveur.onrender.com blob: data:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
       - path: /*
         name: X-Frame-Options
         value: "DENY"

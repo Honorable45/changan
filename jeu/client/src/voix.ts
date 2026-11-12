@@ -1,79 +1,104 @@
-import { FORMATS_VOIX, VOIX_DUREE_MAX, VOIX_MAX_OCTETS } from '../../partage/protocole.ts';
+import { VOIX_ECHANTILLONS_TRAME, VOIX_FREQUENCE, depuisMuLaw, versMuLaw } from '../../partage/protocole.ts';
 
 /**
- * Messages vocaux, façon talkie-walkie : on maintient le bouton pour parler, le message part au relâchement
- * et les autres joueurs l'entendent aussitôt. Le micro n'est ouvert que pendant l'appui.
+ * Voix en direct, de proximité : on tient « Parler », le micro part par trames de 100 ms (μ-law 8 kHz),
+ * et les joueurs à moins de 5 m l'entendent aussitôt, plus fort de près, du côté où l'on se trouve.
  * Le navigateur n'autorise le micro que sur une page sécurisée (https, ou localhost).
  */
 
 export const voixPossible = () =>
-  typeof window !== 'undefined' && window.isSecureContext && !!navigator.mediaDevices?.getUserMedia && typeof MediaRecorder !== 'undefined';
+  typeof window !== 'undefined' && window.isSecureContext && !!navigator.mediaDevices?.getUserMedia && typeof AudioContext !== 'undefined';
 
-/** Premier format que ce navigateur sait enregistrer, parmi ceux du protocole. */
-const formatEnregistrable = () => FORMATS_VOIX.findIndex((f) => MediaRecorder.isTypeSupported(f));
-
-export type Enregistrement = { format: number; audio: Uint8Array; duree: number; url: string };
+type Contexte = AudioContext;
+let contexte: Contexte | null = null;
+/** Un seul contexte audio pour la voix, débloqué au premier geste du joueur (règle des navigateurs). */
+export const contexteVoix = () => {
+  contexte ??= new AudioContext();
+  if (contexte.state === 'suspended') void contexte.resume().catch(() => {});
+  return contexte;
+};
 
 /**
- * Commence un enregistrement. `arreter()` le termine et renvoie le message (null s'il est trop court, undefined s'il était déjà arrêté) ;
- * au bout de VOIX_DUREE_MAX secondes, il s'arrête tout seul et `surFin` reçoit le résultat.
- * Rejette si le micro est refusé ou absent.
+ * Micro : renvoie de quoi envoyer ou non (`emettre`) et fermer. Le micro reste ouvert tant que la partie en a besoin :
+ * rouvrir à chaque appui couperait les premiers mots. Le serveur ne reçoit rien tant que `emettre` est faux.
  */
-export async function enregistrer(surFin: (e: Enregistrement | null | undefined) => void) {
-  const format = formatEnregistrable();
-  if (format < 0) throw new Error('format');
-  const flux = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
-  // 16 kbit/s en Opus : une voix claire, 30 Ko pour 15 s.
-  const rec = new MediaRecorder(flux, { mimeType: FORMATS_VOIX[format], audioBitsPerSecond: 16000 });
-  const morceaux: Blob[] = [];
-  const debut = performance.now();
-  let fini = false;
-  const termine = new Promise<Enregistrement | null>((ok) => {
-    rec.ondataavailable = (e) => { if (e.data.size) morceaux.push(e.data); };
-    rec.onstop = async () => {
-      flux.getTracks().forEach((t) => t.stop());
-      const duree = (performance.now() - debut) / 1000;
-      const blob = new Blob(morceaux, { type: FORMATS_VOIX[format] });
-      // Moins de 0,4 s : un appui par erreur. Trop lourd : refusé par le serveur, inutile de l'envoyer.
-      if (duree < 0.4 || !blob.size || blob.size > VOIX_MAX_OCTETS) { ok(null); return; }
-      ok({ format, audio: new Uint8Array(await blob.arrayBuffer()), duree, url: URL.createObjectURL(blob) });
-    };
-  });
-  rec.start();
-  // Seul le premier arrêt (relâchement ou fin des 15 s) livre le message ; un second reçoit undefined.
-  const arreter = (): Promise<Enregistrement | null | undefined> => {
-    if (fini) return Promise.resolve(undefined);
-    fini = true; clearTimeout(limite);
-    if (rec.state !== 'inactive') rec.stop();
-    return termine;
-  };
-  const limite = setTimeout(() => { void arreter().then(surFin); }, VOIX_DUREE_MAX * 1000);
-  return { arreter, debut };
-}
+export async function ouvrirMicro(surTrame: (audio: Uint8Array) => void) {
+  const ctx = contexteVoix();
+  const flux = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
+  const source = ctx.createMediaStreamSource(flux);
+  // ScriptProcessor : ancien mais disponible partout (Safari compris), sans fichier de script séparé.
+  const proc = ctx.createScriptProcessor(2048, 1, 1);
+  const muet = ctx.createGain();
+  muet.gain.value = 0;
+  source.connect(proc); proc.connect(muet); muet.connect(ctx.destination);
 
-/** Lecture des messages vocaux reçus, l'un après l'autre. */
-export function creerLecteur(surChange: (qui: string | null) => void) {
-  const file: { url: string; nom: string }[] = [];
-  let actuel: HTMLAudioElement | null = null, muet = false;
-  const suivant = () => {
-    actuel = null;
-    const m = file.shift();
-    if (!m || muet) { surChange(null); return; }
-    const a = new Audio(m.url);
-    // Un peu en dessous du maximum : un message crié ne couvre pas le jeu.
-    a.volume = 0.8;
-    actuel = a;
-    surChange(m.nom);
-    a.onended = a.onerror = () => { if (actuel === a) suivant(); };
-    a.play().catch(() => { if (actuel === a) suivant(); });
+  const pas = ctx.sampleRate / VOIX_FREQUENCE;
+  const trame = new Uint8Array(VOIX_ECHANTILLONS_TRAME);
+  let n = 0, position = 0, filtre = 0, emettre = false;
+  // Passe-bas simple avant de passer à 8 kHz, pour que la voix ne grésille pas.
+  const k = Math.min(1, (2 * Math.PI * 3400) / ctx.sampleRate);
+  proc.onaudioprocess = (ev) => {
+    const entree = ev.inputBuffer.getChannelData(0);
+    for (let i = 0; i < entree.length; i++) {
+      filtre += (entree[i]! - filtre) * k;
+      position += 1;
+      if (position < pas) continue;
+      position -= pas;
+      if (!emettre) { n = 0; continue; }
+      trame[n++] = versMuLaw(filtre);
+      if (n === trame.length) { surTrame(trame.slice()); n = 0; }
+    }
   };
   return {
-    /** Ajoute un message à la file ; il est joué dès que le précédent est fini. */
-    jouer(url: string, nom: string) { if (muet) return; file.push({ url, nom }); if (file.length > 6) file.shift(); if (!actuel) suivant(); },
-    /** Rejoue tout de suite un message de la discussion. */
-    rejouer(url: string, nom: string) { actuel?.pause(); file.length = 0; file.push({ url, nom }); suivant(); },
+    set emettre(v: boolean) { emettre = v; if (!v) n = 0; },
+    get emettre() { return emettre; },
+    fermer() { proc.onaudioprocess = null; source.disconnect(); proc.disconnect(); muet.disconnect(); flux.getTracks().forEach((t) => t.stop()); },
+  };
+}
+export type Micro = Awaited<ReturnType<typeof ouvrirMicro>>;
+
+/**
+ * Haut-parleurs : une file par joueur qui parle. Chaque trame est jouée à la suite de la précédente, avec 150 ms d'avance
+ * pour absorber les à-coups du réseau ; si le retard dépasse 600 ms, on rattrape (la voix reste « en direct »).
+ */
+export function creerHautParleurs() {
+  const voies = new Map<number, { gain: GainNode; pan: StereoPannerNode; suite: number; derniere: number }>();
+  let muet = false;
+  const voie = (id: number) => {
+    let v = voies.get(id);
+    if (!v) {
+      const ctx = contexteVoix();
+      const gain = ctx.createGain(), pan = ctx.createStereoPanner();
+      gain.connect(pan); pan.connect(ctx.destination);
+      v = { gain, pan, suite: 0, derniere: 0 };
+      voies.set(id, v);
+    }
+    return v;
+  };
+  return {
+    /** Joue une trame reçue. `volume` de 0 à 1 (selon la distance), `cote` de −1 (gauche) à 1 (droite). */
+    jouer(id: number, audio: Uint8Array, volume: number, cote: number) {
+      if (muet) return;
+      const ctx = contexteVoix();
+      const v = voie(id);
+      const buf = ctx.createBuffer(1, audio.length, VOIX_FREQUENCE);
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < audio.length; i++) data[i] = depuisMuLaw(audio[i]!);
+      const t = ctx.currentTime;
+      if (v.suite < t + 0.05 || v.suite > t + 0.6) v.suite = t + 0.15;
+      v.gain.gain.setTargetAtTime(Math.max(0, Math.min(1, volume)), t, 0.05);
+      v.pan.pan.setTargetAtTime(Math.max(-1, Math.min(1, cote)), t, 0.05);
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(v.gain);
+      src.start(v.suite);
+      v.suite += buf.duration;
+      v.derniere = performance.now();
+    },
+    /** Joueurs entendus dans les 400 dernières millisecondes. */
+    parlent(): number[] { const t = performance.now(); return [...voies].filter(([, v]) => t - v.derniere < 400).map(([id]) => id); },
     get muet() { return muet; },
-    setMuet(m: boolean) { muet = m; if (m) { file.length = 0; actuel?.pause(); actuel = null; surChange(null); } },
-    fermer() { file.length = 0; actuel?.pause(); actuel = null; },
+    setMuet(m: boolean) { muet = m; if (m) for (const v of voies.values()) v.suite = 0; },
+    fermer() { for (const v of voies.values()) { v.gain.disconnect(); v.pan.disconnect(); } voies.clear(); },
   };
 }
